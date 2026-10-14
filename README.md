@@ -93,8 +93,8 @@ python3 letterboxd_friends_v2.py 1990s                       # …or a decade
 python3 letterboxd_app.py                                    # the interface, on 127.0.0.1:8765
 ```
 
-All data — scraped lists, per-person files, caches, settings — lives in your home
-folder, never in this repository.
+Results are written to your home folder (`~/friends_watched_*.csv`), with caches
+and your settings in `~/.letterboxd_cache/`, so the project folder holds only code.
 
 Tests run on made-up data and need no network:
 

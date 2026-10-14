@@ -10,8 +10,8 @@ summary page (with a Greek edition).
 
 Letterboxd shows "watched by N friends" one film at a time. This answers the
 questions you can't ask it directly: *what are the 50 most-watched 1970s films
-among my friends? which new releases are they actually loving? what's playing
-nearby that I haven't seen but they have?*
+among my friends? which new releases are they actually loving? which films is
+everyone talking about right now — and which of them are playing in town this week?*
 
 ![The app: what's rising across every list, and what's playing in town this week](docs/app-overview.jpg)
 

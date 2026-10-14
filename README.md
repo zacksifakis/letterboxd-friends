@@ -63,6 +63,31 @@ Most of the work went into making the numbers trustworthy without me watching:
 - **Renamed accounts are recognised** by matching film lists, so an exclusion
   follows the person, not the username.
 
+## How it was built
+
+This was built with [Claude Code](https://claude.com/claude-code) as a pair
+programmer, and the code is largely AI-written. My part was the product: what it
+should do and how it should behave, where the data comes from (including the
+local film newsletter), and testing it against reality.
+
+Most of the reliability work above started with me noticing a number that didn't
+match Letterboxd and tracing why:
+
+- *The Odyssey* showed 91 friends instead of 94 — a scrape that had quietly lost
+  three people had overwritten good data. Runs now retry, fall back to the last
+  known list, or refuse to write at all.
+- Nearly every new film gained a seat overnight — someone I'd excluded had
+  changed their username and was being counted again. Exclusions now follow the
+  person, not the name.
+- A film was missing its "playing in town" badge — the newsletter had linked a
+  different film. Titles are now checked against the films they link to.
+- Chasing why the published page hadn't updated turned up a decade that had
+  shrunk to a tenth of its films — a run had seen only one of the people I
+  follow. A short friends list now stops the run.
+
+It's also been a close look at where AI coding is strong, and where it needs a
+person checking its work against the real world.
+
 ## Layout
 
 | File | Role |

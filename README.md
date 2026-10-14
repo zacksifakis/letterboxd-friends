@@ -136,11 +136,10 @@ python3 -m unittest discover tests
 
 ## A note on scraping
 
-This reads public Letterboxd pages. Letterboxd's terms don't allow automated
-access, and its servers may refuse it; this version makes plain requests and
-reports when they're refused. It's a personal, non-commercial project — keep
-request rates low, keep the results to yourself, and don't use it to collect
-data about people who haven't agreed to it.
+This reads public Letterboxd pages. Letterboxd's terms don't permit automated
+access, so this is a personal, non-commercial project: it paces its requests and
+stops cleanly when they're refused. The published pages show only aggregate
+counts — no usernames and no individual activity.
 
 ## License
 

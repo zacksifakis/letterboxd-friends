@@ -139,7 +139,8 @@ python3 -m unittest discover tests
 This reads public Letterboxd pages. Letterboxd's terms don't permit automated
 access, so this is a personal, non-commercial project: it paces its requests and
 stops cleanly when they're refused. The published pages show only aggregate
-counts — no usernames and no individual activity.
+counts — no usernames and no individual activity. The MIT license covers the
+code; using it is still subject to Letterboxd's terms.
 
 ## License
 

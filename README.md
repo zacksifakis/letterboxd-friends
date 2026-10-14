@@ -72,7 +72,8 @@ local film newsletter), and testing it against reality.
 
 Every feature started as my idea: counting by year and decade; search by film,
 director or actor; a real Mac app that keeps itself up to date; posters; what
-changed since the last scrape, and over a week or a month; friends' own ratings
+changed since the last scrape, and over a week or a month; what's rising across
+every list; one-click recommendations; friends' own ratings
 and likes instead of Letterboxd's averages; excluding accounts; local screenings
 from a weekly film newsletter, with links to each theater; and the Greek edition.
 

@@ -197,7 +197,11 @@ function rowHtml(x){
     + `<td class="meter"><i style="width:${Math.max(2, 100 * x.count / maxCount)}%"></i></td></tr>`;
 }
 
+// ?demo shows the app without your own watch history — for screenshots.
+const DEMO = new URLSearchParams(location.search).has("demo");
+
 async function loadSeen(){
+  if (DEMO) { SEEN = new Set(); return; }
   try{
     const d = await (await fetch("/api/seen")).json();
     SEEN = new Set(d.slugs || []);

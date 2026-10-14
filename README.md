@@ -1,5 +1,7 @@
 # Letterboxd Friends
 
+*I grew up in video rental stores, back when picking a movie meant reading the backs of boxes and asking whoever was behind the counter what was good. Those stores are mostly gone, and the recommendations with them. This project is my attempt to bring a little of that back: what are the people whose taste I trust actually watching, and loving?*
+
 A personal project: for every year and decade of film, how many of the people I
 follow on Letterboxd have seen each movie — plus what they thought of it, what's
 rising, and what's playing in my city this week. It runs on my Mac as a small

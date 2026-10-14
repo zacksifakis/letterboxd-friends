@@ -1,0 +1,18 @@
+# local network overrides — never committed
+letterboxd_net_local.py
+
+# never commit personal data — settings, scraped lists, caches
+settings.json
+*.csv
+*_per_friend.json
+*.meta.json
+*.log
+.letterboxd_cache/
+.letterboxd_history/
+
+# build output
+__pycache__/
+*.pyc
+mac/launcher
+*.app/
+.DS_Store

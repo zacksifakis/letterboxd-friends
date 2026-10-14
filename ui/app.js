@@ -1,0 +1,586 @@
+let rows=[], sortKey="count", sortDir=-1, maxCount=1, poll=null, curPeriod=null;
+const $ = id => document.getElementById(id);
+
+function ago(ts){
+  const s = Date.now()/1000 - ts;
+  if (s < 3600) return Math.round(s/60)+"m ago";
+  if (s < 86400) return Math.round(s/3600)+"h ago";
+  const d = Math.round(s/86400);
+  return d+(d===1?" day ago":" days ago");
+}
+
+let savedInfo = new Map();
+
+async function loadPicker(selected){
+  const saved = await (await fetch("/api/saved")).json();
+  savedInfo = new Map(saved.map(s => [s.period, s]));
+  const nowY = new Date().getFullYear();
+
+  const years = [], decades = [];
+  for (let y = nowY; y >= 1920; y--) years.push(String(y));
+  for (let d = Math.floor(nowY/10)*10; d >= 1920; d -= 10) decades.push(d + "s");
+  // anything scraped outside those ranges (e.g. a stray 2027) still gets listed
+  for (const s of saved) {
+    const list = s.period.endsWith("s") ? decades : years;
+    if (!list.includes(s.period)) list.unshift(s.period);
+  }
+  years.sort((a,b) => b - a);
+  decades.sort((a,b) => parseInt(b) - parseInt(a));
+
+  const option = p => {
+    const i = savedInfo.get(p);
+    const label = i ? `${p}   ·   ${i.rows.toLocaleString()} film${i.rows === 1 ? "" : "s"}   ·   ${ago(i.mtime)}`
+                    : `${p}   ·   not scraped`;
+    return `<option value="${p}">${label}</option>`;
+  };
+  $("pick").innerHTML =
+      `<optgroup label="── DECADES ──">${decades.map(option).join("")}</optgroup>`
+    + `<optgroup label="── YEARS ──">${years.map(option).join("")}</optgroup>`;
+
+  $("pick").value = selected || String(nowY);
+  const nYears = saved.filter(s => !s.period.endsWith("s")).length;
+  $("hint").textContent = `${nYears} years and ${saved.length - nYears} decades scraped`;
+}
+
+function onPick(){
+  const p = $("pick").value;
+  if (savedInfo.has(p)) {
+    $("run").textContent = "Refresh";
+    showResults(p);
+  } else {
+    $("run").textContent = "Scrape";
+    $("resultsCard").style.display = "none";
+    $("diffCard").style.display = "none";
+  }
+}
+
+// Big periods have tens of thousands of films; drawing them all at once makes
+// sorting and filtering sluggish, so rows are added in batches as you scroll.
+const CHUNK = 500;
+let viewRows = [], rendered = 0;
+
+let SEEN = new Set();
+let MAD = {now: new Map(), soon: new Map(), data: null, showing: "now", all: false};
+
+const shortDate = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric"});
+const todayIso = () => new Date().toLocaleDateString("en-CA");
+
+async function loadMadison(){
+  try{
+    const d = await (await fetch("/api/madison")).json();
+    MAD.data = d;
+    MAD.now = new Map(d.now.map(x => [x.slug, x]));
+    MAD.soon = new Map(d.soon.map(x => [x.slug, x]));
+    renderMadison();
+    if (d.running) setTimeout(() => loadMadison().then(() => rows.length && render()), 5000);
+  }catch(e){}
+}
+
+// A venue the newsletter linked opens that film's page at that theater.
+function venueLinks(x){
+  const links = x.links || {};
+  return x.venues.map(v => links[v]
+    ? `<a href="${links[v]}" target="_blank" rel="noopener">${v}</a>` : v).join(", ");
+}
+
+function renderMadison(){
+  const d = MAD.data;
+  if (!d || (!d.now.length && !d.soon.length)){ $("madCard").hidden = true; return; }
+  const list = MAD.showing === "now" ? d.now : d.soon;
+  const range = list.length ? `${shortDate(list[0].start)}\u2013${shortDate(list[0].end)}` : "";
+  $("madHead").textContent = MAD.showing === "now" ? "Playing in Madison" : "Coming to Madison next week";
+  $("madMeta").innerHTML = `${range} \u00b7 ${list.length} films \u00b7 from `
+    + (d.latest ? `<a href="${d.latest.url}" target="_blank" rel="noopener">${d.latest.title}</a>` : "The Horizon Line")
+    + `, The Horizon Line`;
+  const shown = MAD.all ? list : list.slice(0, 10);
+  $("madList").innerHTML = shown.map(x => {
+    const seen = SEEN.has(x.slug);
+    const today = x.next && x.next === todayIso();
+    return `<div class="mad"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
+      + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
+      + `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
+      + hitStats(x)
+      + (x.section ? `<span class="tag">${x.section}</span>` : "")
+      + (today ? `<span class="tag today">today</span>` : "")
+      + (x.note ? `<span class="tag">${x.note}</span>` : "") + `</div>`
+      + `<div class="mv">${venueLinks(x) || "venues not listed"}</div></div></div>`;
+  }).join("");
+  $("madMore").textContent = list.length > 10 ? (MAD.all ? "show fewer" : `show all ${list.length}`) : "";
+  const other = MAD.showing === "now" ? d.soon.length : d.now.length;
+  $("madToggle").textContent = other ? (MAD.showing === "now" ? `coming next week (${other})` : "back to this week") : "";
+  $("madCard").hidden = false;
+}
+
+function showMadison(tr){
+  const btn = tr.querySelector(".madb"), slug = tr.dataset.slug;
+  const x = MAD.now.get(slug) || MAD.soon.get(slug);
+  if (!x) return;
+  const open = panelBelow(tr, "madison");
+  if (open){ open.remove(); return; }
+  const when = MAD.now.has(slug) ? `this week (${shortDate(x.start)}\u2013${shortDate(x.end)})`
+                                  : `next week (${shortDate(x.start)}\u2013${shortDate(x.end)})`;
+  const body = `Playing in Madison ${when}${x.section ? ` \u00b7 ${x.section}` : ""}${x.note ? ` \u00b7 ${x.note}` : ""}: `
+    + `<b>${venueLinks(x) || "venues not listed"}</b> \u00b7 `
+    + `<a href="${x.url}" target="_blank" rel="noopener">${x.post}</a>`;
+  tr.insertAdjacentHTML("afterend", `<tr class="wrow" data-kind="madison"><td></td><td colspan="4">${body}</td></tr>`);
+}
+
+let riseDays = 7, riseAll = false;
+async function loadRising(days){
+  if (days) { riseDays = days; riseAll = false; }
+  let d;
+  try { d = await (await fetch(`/api/rising?days=${riseDays}`)).json(); } catch (e) { return; }
+  const rows = riseAll ? d.rows : d.rows.slice(0, 8);
+  document.querySelectorAll("#riseSince button").forEach(b =>
+    b.classList.toggle("on", +b.dataset.days === riseDays));
+  $("riseMeta").textContent = d.rows.length
+    ? `${d.films.toLocaleString()} films gained seats` + (d.since ? ` · since ${ago(d.since)}` : "")
+    : "nothing has moved yet";
+  $("riseList").innerHTML = rows.map(x => {
+    const img = POSTERS.has(x.slug)
+      ? `<img src="/poster/${encodeURIComponent(x.slug)}.jpg" alt="" loading="lazy">`
+      : '<span class="noimg"></span>';
+    return `<div class="rise">${img}<span class="up">+${x.delta}</span>`
+      + `<span class="t"><a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
+      + (x.isNew ? '<span class="new">NEW</span>' : "")
+      + `<span class="where"> ${x.year || ""}</span>${hitStats(x)}</span>`
+      + `<span class="where">${x.count} seats · ${x.period}</span></div>`;
+  }).join("");
+  $("riseMore").textContent = d.rows.length > 8 ? (riseAll ? "show fewer" : `show all ${d.rows.length}`) : "";
+  $("riseCard").hidden = !d.rows.length;
+}
+
+let POSTERS = new Set();         // films with a poster cached on this Mac
+async function loadPosters(){
+  try {
+    const d = await (await fetch("/api/posters")).json();
+    POSTERS = new Set(d.slugs || []);
+  } catch (e) {}
+}
+
+let rankOf = new Map();          // count -> rank, so ties share a number
+
+function computeRanks(){
+  rankOf = new Map();
+  rows.forEach((x, i) => { if (!rankOf.has(x.count)) rankOf.set(x.count, i + 1); });
+}
+
+function ratingCell(x){
+  // only lists scraped since ratings were added carry these
+  if (x.rating == null) return "";
+  const few = (x.ratings || 0) < 10;
+  return `<b class="${few ? "few" : ""}" title="average of ${x.ratings} friend${x.ratings === 1 ? "" : "s"} who rated it`
+    + `${few ? " — fewer than 10, so it sorts below the rest" : ""}">${x.rating.toFixed(1)}\u2605</b>`;
+}
+function likedCell(x){
+  if (x.liked == null) return "";
+  const few = (x.count || 0) < 10;
+  return `<span class="heart${few ? " few" : ""}" title="${x.liked}% of the ${x.count} who watched it liked it`
+    + `${few ? " — fewer than 10, so it sorts below the rest" : ""}">${x.liked}%\u2665</span>`;
+}
+
+function rowHtml(x){
+  const seen = SEEN.has(x.slug);
+  const poster = POSTERS.has(x.slug)
+    ? `<img class="pos" src="/poster/${encodeURIComponent(x.slug)}.jpg" alt="" loading="lazy" decoding="async">`
+    : '<span class="pos"></span>';
+  return `<tr class="${seen ? "seen" : ""}" data-slug="${x.slug}"><td class="rank">${rankOf.get(x.count)}</td>`
+    + `<td class="film">${poster}<span class="fi">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
+    + `<a href="${x.url}" target="_blank" rel="noopener">${x.title}</a>`
+    + (MAD.now.has(x.slug) ? `<button class="madb now" type="button">in Madison</button>`
+       : MAD.soon.has(x.slug) ? `<button class="madb soon" type="button">Madison next week</button>` : "")
+    + `<button class="who" type="button" aria-expanded="false">who?</button>`
+    + `<button class="lists" type="button" aria-expanded="false">lists</button></span></td>`
+    + `<td class="yr">${x.year || ""}</td>`
+    + `<td class="rate">${ratingCell(x)}</td><td class="rate">${likedCell(x)}</td>`
+    + `<td class="cnt">${x.count}</td>`
+    + `<td class="meter"><i style="width:${Math.max(2, 100 * x.count / maxCount)}%"></i></td></tr>`;
+}
+
+async function loadSeen(){
+  try{
+    const d = await (await fetch("/api/seen")).json();
+    SEEN = new Set(d.slugs || []);
+    const label = $("hideSeen").parentElement;
+    label.title = d.count
+      ? `${d.count.toLocaleString()} films on your own profile, checked ${ago(Date.parse(d.asOf) / 1000)}`
+      : (d.running ? "Fetching your own watched list\u2026" : "Your own watched list hasn't been fetched yet");
+    if (d.running) setTimeout(() => loadSeen().then(render), 4000);
+  }catch(e){}
+}
+// The app can stay open for days: pick up newly logged films without a reload.
+setInterval(async () => {
+  const before = SEEN.size;
+  await loadSeen();
+  if (SEEN.size !== before && rows.length) render();
+}, 20 * 60 * 1000);
+
+function panelBelow(tr, kind){
+  for (let el = tr.nextElementSibling; el && el.classList.contains("wrow"); el = el.nextElementSibling)
+    if (el.dataset.kind === kind) return el;
+  return null;
+}
+
+async function showWatchers(tr){
+  const btn = tr.querySelector(".who"), slug = tr.dataset.slug;
+  if (btn.getAttribute("aria-expanded") === "true"){
+    const panel = panelBelow(tr, "who");
+    if (panel) panel.remove();
+    btn.setAttribute("aria-expanded", "false"); btn.textContent = "who?";
+    return;
+  }
+  btn.setAttribute("aria-expanded", "true"); btn.textContent = "hide";
+  const res = await fetch(`/api/watchers?period=${encodeURIComponent(curPeriod)}&slug=${encodeURIComponent(slug)}`);
+  const d = await res.json();
+  const body = res.ok
+    ? (d.watchers.length
+        ? `<b>${d.watchers.length}</b> of the people you follow: `
+          + d.watchers.map(w => {
+              const u = typeof w === "string" ? w : w.user;
+              const mark = (typeof w === "object" && (w.stars || w.liked))
+                ? `<span class="mark">${w.stars ? w.stars.toFixed(1).replace(".0", "") + "\u2605" : ""}`
+                  + `${w.liked ? " \u2665" : ""}</span>` : "";
+              return `<a href="https://letterboxd.com/${u}/" target="_blank" rel="noopener">${u}</a>${mark}`;
+            }).join(", ")
+        : "None of the people you follow logged this one.")
+    : d.error;
+  tr.insertAdjacentHTML("afterend", `<tr class="wrow" data-kind="who"><td></td><td colspan="4">${body}</td></tr>`);
+}
+
+// "Recommend me something": films you haven't seen, rated by at least 10
+// friends, best-rated first. Combines with the title filter and with
+// "Playing in Madison", which makes it "what should I go see this week".
+let recommend = false;
+function setRecommend(on){
+  recommend = on;
+  $("recBtn").classList.toggle("on", on);
+  $("recBtn").textContent = on ? "\u2715 Back to the full list" : "Recommend me something";
+  if (on) { sortKey = "rating"; sortDir = -1; }
+  else { sortKey = "count"; sortDir = -1; }
+  render();
+}
+$("recBtn").onclick = () => setRecommend(!recommend);
+
+function render(){
+  const q = $("filter").value.toLowerCase();
+  const min = parseInt($("minSeen").value || "1", 10);
+  const hide = $("hideSeen").checked || recommend;
+  const onlyMad = $("onlyMadison").checked;
+  let r = rows.filter(x => x.count >= min && (!hide || !SEEN.has(x.slug))
+                        && (!onlyMad || MAD.now.has(x.slug))
+                        && (!recommend || (x.rating != null && (x.ratings || 0) >= 10))
+                        && (!q || x.title.toLowerCase().includes(q)));
+  const note = $("recNote");
+  if (recommend) {
+    note.innerHTML = r.length
+      ? `<b>${r.length.toLocaleString()} film${r.length === 1 ? "" : "s"} you haven't seen</b>, `
+        + `rated by at least 10 friends, best first${onlyMad ? " — playing in Madison now" : ""}.`
+      : (onlyMad ? "Nothing playing in Madison this week that you haven't seen has 10+ ratings."
+                 : "Nothing here you haven't seen has 10+ ratings yet.");
+    note.hidden = false;
+  } else note.hidden = true;
+  // Rating and Liked sort strictly by the number shown. Films with fewer than
+  // MIN_BASE ratings (or watchers, for Liked) go below the rest, still in order,
+  // so a 5.0 from one person can't take the top spot.
+  const MIN_BASE = 10;
+  const base = (x, k) => k === "rating" ? (x.ratings || 0) : (x.count || 0);
+  r.sort((a,b)=>{ let A=a[sortKey],B=b[sortKey];
+    if(sortKey==="rating"||sortKey==="liked"){
+      const fa = base(a, sortKey) < MIN_BASE, fb = base(b, sortKey) < MIN_BASE;
+      if (A != null && B != null && fa !== fb) return fa ? 1 : -1;   // few-ratings films last
+      if(A==null&&B==null) return b.count-a.count;
+      if(A==null) return 1;              // unrated films sink, either direction
+      if(B==null) return -1;
+      return A<B?-sortDir:A>B?sortDir:b.count-a.count;
+    }
+    if(sortKey!=="count"){A=String(A).toLowerCase();B=String(B).toLowerCase();}
+    return A<B?-sortDir:A>B?sortDir:0; });
+  $("shown").textContent = `${r.length.toLocaleString()} of ${rows.length.toLocaleString()}`;
+  viewRows = r; rendered = 0;
+  $("tb").innerHTML = "";
+  appendRows();
+}
+
+function appendRows(){
+  const next = viewRows.slice(rendered, rendered + CHUNK);
+  if (next.length) {
+    $("tb").insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+    rendered += next.length;
+  }
+  const left = viewRows.length - rendered;
+  $("more").style.display = left > 0 ? "flex" : "none";
+  $("moreInfo").textContent = `showing ${rendered.toLocaleString()} of ${viewRows.length.toLocaleString()}`;
+  $("loadMore").textContent = `Load ${Math.min(CHUNK, left).toLocaleString()} more`;
+}
+
+window.addEventListener("scroll", () => {
+  if (rendered < viewRows.length &&
+      window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 1500)
+    appendRows();
+}, {passive: true});
+
+async function showResults(period){
+  const res = await fetch("/api/results?period="+encodeURIComponent(period));
+  if(!res.ok){ alert("No saved results for "+period); return; }
+  const d = await res.json();
+  rows = d.rows; curPeriod = d.period; maxCount = Math.max(1,...rows.map(r=>r.count));
+  computeRanks();
+  $("resultsCard").style.display="block";
+  $("sPeriod").textContent=d.period; $("sFilms").textContent=rows.length.toLocaleString();
+  $("sTop").textContent=maxCount; $("sAge").textContent=ago(d.mtime);
+  $("dl").href="/api/download?period="+encodeURIComponent(d.period);
+  $("showDiff").style.display = d.hasPrev ? "inline" : "none";
+  $("diffCard").style.display="none";
+  render();
+}
+
+let diffSince = "last";
+async function showDiff(period, since){
+  if (since) diffSince = since;
+  const res = await fetch(`/api/diff?period=${encodeURIComponent(period)}&since=${diffSince}`);
+  if(!res.ok){ alert("Nothing to compare against yet for that stretch of time."); return; }
+  const d = await res.json();
+  $("diffCard").style.display="block";
+  document.querySelectorAll("#diffSince button").forEach(b =>
+    b.classList.toggle("on", b.dataset.since === d.since));
+  $("diffMeta").textContent =
+    `vs ${d.baseline} · ${ago(d.prevTime)} → ${ago(d.curTime)} · `
+    + `${d.prevFilms.toLocaleString()} → ${d.curFilms.toLocaleString()} films`;
+  $("gainHead").textContent = `Gained watches (${d.nGained})`;
+  $("addHead").textContent = `New films (${d.nAdded})`;
+  const filmLink = x =>
+    `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`;
+  $("gained").innerHTML = d.gained.length
+    ? d.gained.map(x=>`<div><span class="up">+${x.delta}</span> ${filmLink(x)} <span class="muted">(${x.year||"?"}) → ${x.count}</span>${hitStats(x)}</div>`).join("")
+    : '<div class="muted">nothing gained</div>';
+  $("added").innerHTML = d.added.length
+    ? d.added.map(x=>`<div>${filmLink(x)} <span class="muted">(${x.year||"?"})</span> <span class="up">${x.count}</span><span class="new">NEW</span>${hitStats(x)}</div>`).join("")
+    : '<div class="muted">no new films</div>';
+  if (d.nDropped) $("added").innerHTML +=
+    `<div class="muted" style="margin-top:8px">${d.nDropped} film(s) lost watches</div>`;
+}
+
+document.querySelectorAll("th[data-k]").forEach(th => th.onclick = ()=>{
+  const k=th.dataset.k;
+  if(sortKey===k) sortDir=-sortDir; else {sortKey=k; sortDir = k==="count"?-1:1;}
+  render();
+});
+$("filter").oninput = render;
+$("loadMore").onclick = appendRows;
+$("tb").addEventListener("click", e => {
+  const who = e.target.closest(".who");
+  if (who) { showWatchers(who.closest("tr")); return; }
+  const lists = e.target.closest(".lists");
+  if (lists) { showLists(lists.closest("tr")); return; }
+  const mad = e.target.closest(".madb");
+  if (mad) showMadison(mad.closest("tr"));
+});
+
+async function showLists(tr){
+  const btn = tr.querySelector(".lists"), slug = tr.dataset.slug;
+  if (btn.getAttribute("aria-expanded") === "true"){
+    const panel = panelBelow(tr, "lists");
+    if (panel) panel.remove();
+    btn.setAttribute("aria-expanded", "false"); btn.textContent = "lists";
+    return;
+  }
+  btn.setAttribute("aria-expanded", "true"); btn.textContent = "hide";
+  const d = await (await fetch("/api/lists?slug=" + encodeURIComponent(slug))).json();
+  let body;
+  if (d.lists === null)
+    body = d.running ? "Still reading your liked lists\u2026 try again in a minute."
+                     : (d.error || "Your liked lists haven't been read yet.");
+  else if (!d.lists.length)
+    body = `Not in any of your ${d.total} liked lists.`;
+  else
+    body = `In <b>${d.lists.length}</b> of your ${d.total} liked lists: `
+      + d.lists.map(l => `<a href="${l.url}" target="_blank" rel="noopener">${l.name}</a>`
+        + ` <span class="pos">#${l.position.toLocaleString()} of ${l.size.toLocaleString()}</span>`).join(", ");
+  tr.insertAdjacentHTML("afterend", `<tr class="wrow" data-kind="lists"><td></td><td colspan="4">${body}</td></tr>`);
+}
+try { $("showPosters").checked = localStorage.getItem("showPosters") !== "0"; } catch (e) {}
+function paintPosters(){
+  $("tb").classList.toggle("posters", $("showPosters").checked);
+}
+$("showPosters").onchange = () => {
+  try { localStorage.setItem("showPosters", $("showPosters").checked ? "1" : "0"); } catch (e) {}
+  paintPosters();
+};
+paintPosters();
+try { $("hideSeen").checked = localStorage.getItem("hideSeen") === "1"; } catch (e) {}
+$("onlyMadison").onchange = render;
+$("madMore").onclick = e => { e.preventDefault(); MAD.all = !MAD.all; renderMadison(); };
+$("madToggle").onclick = e => {
+  e.preventDefault(); MAD.showing = MAD.showing === "now" ? "soon" : "now"; MAD.all = false; renderMadison();
+};
+$("hideSeen").onchange = () => {
+  try { localStorage.setItem("hideSeen", $("hideSeen").checked ? "1" : "0"); } catch (e) {}
+  render();
+};
+
+async function loadHealth(){
+  const h = await (await fetch("/api/health")).json();
+  const el = $("health"), now = Date.now() / 1000;
+  const sinceTick = h.lastTick ? (now - h.lastTick) / 3600 : Infinity;
+  const problems = [];
+  if (!h.tickLoaded) problems.push("<b>auto-sync is not installed</b>");
+  else if (sinceTick > 3) problems.push(`<b>auto-sync hasn't run for ${h.lastTick ? ago(h.lastTick).replace(" ago", "") : "a while"}</b>`);
+  if (h.yearAge === null || h.yearAge > 1.25) problems.push("<b>this year's data is out of date</b>");
+  if (h.outcome === "failed") problems.push("<b>last refresh failed</b>");
+  if (h.outcome === "incomplete") problems.push("<b>last refresh had missing friends</b>");
+  // whatever the hourly self-check found, in its own words
+  for (const p of (h.check?.problems || []))
+    problems.push(p.level === "serious" ? `<b>${p.what}</b>` : p.what);
+
+  const parts = ['<span class="dot"></span>'];
+  parts.push(h.yearAge !== null ? `this year refreshed <b>${ago(now - h.yearAge * 86400)}</b>` : "this year never refreshed");
+  parts.push('<span class="sep">|</span>');
+  parts.push(h.staleDecades.length
+    ? `${h.staleDecades.length} decade${h.staleDecades.length > 1 ? "s" : ""} catching up`
+      + (h.oldest ? ` (oldest: ${h.oldest[0]}, ${h.oldest[1] === null ? "never" : Math.round(h.oldest[1]) + " days"})` : "")
+    : "all decades current");
+  parts.push('<span class="sep">|</span>');
+  parts.push(h.lastTick ? `auto-sync last ran ${ago(h.lastTick)}` : "auto-sync hasn't run yet");
+  if (problems.length) parts.push('<span class="sep">|</span>', problems.join(" \u00b7 "));
+  el.innerHTML = parts.join(" ");
+  el.className = problems.length ? "health warn" : "health";
+  el.hidden = false;
+}
+try { const v = localStorage.getItem("minSeen"); if (v) $("minSeen").value = v; } catch (e) {}
+$("minSeen").onchange = () => {
+  try { localStorage.setItem("minSeen", $("minSeen").value); } catch (e) {}
+  render();
+};
+$("pick").onchange = onPick;
+$("showDiff").onclick = e => { e.preventDefault(); showDiff(curPeriod); };
+$("riseSince").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (b) loadRising(+b.dataset.days);
+});
+$("riseMore").onclick = e => { e.preventDefault(); riseAll = !riseAll; loadRising(); };
+$("diffSince").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (b) showDiff(curPeriod, b.dataset.since);
+});
+$("quit").onclick = async ()=>{
+  if(!confirm("Stop the app?")) return;
+  await fetch("/api/quit",{method:"POST"});
+  document.body.innerHTML='<main><div class="card">App stopped. '
+    +'Restart with <code>python3 ~/Desktop/letterboxd_app.py</code> '
+    +'or the Letterboxd Friends app.</div></main>';
+};
+
+$("run").onclick = async ()=>{
+  const period=$("pick").value;
+  const res=await fetch("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},
+                                    body:JSON.stringify({period})});
+  if(!res.ok){ alert((await res.json()).error); return; }
+  $("progwrap").style.display="block"; $("run").disabled=true;
+  $("quality").innerHTML=""; $("diffCard").style.display="none";
+  if(poll) clearInterval(poll);
+  poll=setInterval(tick,1200); tick();
+};
+
+async function tick(){
+  const s = await (await fetch("/api/status")).json();
+  $("log").textContent = s.lines.slice(-40).join("\n");
+  $("log").scrollTop = $("log").scrollHeight;
+  if(s.progress) $("bar").style.width = (100*s.progress.done/s.progress.total)+"%";
+  if(s.quality) $("quality").innerHTML =
+    `<div class="flag ${s.quality.ok?"ok":"bad"}">${s.quality.text}</div>`;
+  if(!s.running && s.finished){
+    clearInterval(poll); poll=null; $("run").disabled=false; $("bar").style.width="100%";
+    if(s.returncode===0){ await loadPicker(s.period); await showResults(s.period);
+                          $("run").textContent = "Refresh";
+                          await showDiff(s.period).catch(()=>{}); }
+  }
+}
+
+let mode = "film";
+document.querySelectorAll(".mode").forEach(b => b.onclick = ()=>{
+  document.querySelectorAll(".mode").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); mode = b.dataset.m;
+});
+
+function posChips(list){
+  if(!list.length) return '<span class="pos none">not scraped yet</span>';
+  return list.map(a=>`<span class="pos">${a.period} <b>#${a.rank}</b>`
+    + `<span class="muted"> of ${a.outOf.toLocaleString()} · ${a.count} seen</span></span>`).join("");
+}
+
+async function doSearch(){
+  const q = $("q").value.trim();
+  if(q.length < 2){ alert("Type at least 2 characters."); return; }
+  $("qout").innerHTML = '<span class="muted">searching…</span>';
+  $("qhint").textContent = "";
+
+  if(mode === "film"){
+    const d = await (await fetch("/api/search?q="+encodeURIComponent(q))).json();
+    if(!d.hits.length){
+      $("qout").innerHTML = '<span class="muted">No film titles match that in your scraped periods.</span>'
+        + '<div style="margin-top:8px">Looking for a person? Search it as '
+        + '<a href="#" class="switch" data-m="actor">an actor</a> or '
+        + '<a href="#" class="switch" data-m="director">a director</a>.</div>';
+      wireSwitches(); return;
+    }
+    $("qhint").textContent = `${d.hits.length} match${d.hits.length>1?"es":""}`;
+    $("qout").innerHTML = d.hits.map(h=>`<div class="hit">
+        <div class="t"><a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
+        <span class="muted">${h.year?"("+h.year+")":""}</span>${hitStats(h)}</div>
+        <div>${posChips(h.in)}</div></div>`).join("");
+    return;
+  }
+
+  const res = await fetch(`/api/person?name=${encodeURIComponent(q)}&role=${mode}`);
+  if(!res.ok){ $("qout").innerHTML =
+      `<span class="muted">${(await res.json()).error}</span>`; return; }
+  const d = await res.json();
+  $("qhint").textContent = `${d.name} as ${d.role} · ${d.scraped} of ${d.total} films in your data`;
+  const also = d.alsoRole
+    ? ` · also credited as ${d.alsoRole === "actor" ? "an actor" : "a director"} — `
+      + `<a href="#" class="switch" data-m="${d.alsoRole}">show those</a>`
+    : "";
+  $("qout").innerHTML =
+    `<div class="hit"><a href="${d.personUrl}" target="_blank" rel="noopener">${d.personUrl}</a>${also}</div>`
+    + d.films.map(f=>`<div class="hit">
+        <div class="t"><a href="${f.url}" target="_blank" rel="noopener">${f.title}</a>
+        <span class="muted">${f.year?"("+f.year+")":""}</span>${hitStats(f)}</div>
+        <div>${posChips(f.in)}</div></div>`).join("");
+  wireSwitches();
+}
+
+// Friends' average and liked share beside a search result, when the list it
+// came from has them.
+function hitStats(h){
+  if (h.rating == null && h.liked == null) return "";
+  return `<span class="hitstats" title="${h.ratings} of the ${h.seats} friends who watched it rated it">`
+    + (h.rating != null ? `<b>${h.rating.toFixed(1)}\u2605</b>` : "")
+    + (h.liked != null ? ` <span class="heart">${h.liked}%\u2665</span>` : "") + `</span>`;
+}
+
+function wireSwitches(){
+  document.querySelectorAll("#qout .switch").forEach(a => a.onclick = e => {
+    e.preventDefault();
+    document.querySelector(`.mode[data-m="${a.dataset.m}"]`).click();
+    doSearch();
+  });
+}
+
+$("go").onclick = doSearch;
+$("q").addEventListener("keydown", e=>{ if(e.key==="Enter") doSearch(); });
+
+loadSeen().then(() => loadPosters()).then(() => loadRising()).then(() => loadMadison())
+          .then(() => loadPicker().then(onPick));
+
+// Re-read the listings every 10 minutes: picks up a new weekly report, and
+// rolls "this week" over at midnight even when nothing new was fetched.
+setInterval(async () => {
+  const stamp = d => d ? `${d.asOf}|${d.now.length}|${d.soon.length}` : "";
+  const before = stamp(MAD.data);
+  await loadMadison();
+  if (stamp(MAD.data) !== before && rows.length) render();
+}, 10 * 60 * 1000);
+loadHealth();
+(async()=>{ const s=await (await fetch("/api/status")).json();
+  if(s.running){ $("progwrap").style.display="block"; $("run").disabled=true;
+                 poll=setInterval(tick,1200); tick(); } })();

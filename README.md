@@ -11,6 +11,8 @@ questions you can't ask it directly: *what are the 50 most-watched 1970s films
 among my friends? which new releases are they actually loving? what's playing
 nearby that I haven't seen but they have?*
 
+![The app: what's rising across every list, and what's playing in town this week](docs/app-overview.jpg)
+
 ## What it does
 
 - **Counts, per year and per decade** — every film the people I follow have
@@ -31,6 +33,11 @@ nearby that I haven't seen but they have?*
   fit a 16 MB page limit (8.7 MB of data → 3.7 MB, decompressed in the browser).
 - **Excluding people** — anyone can be left out of every count; it's a recount
   of stored per-person data, not a re-scrape, and it survives username changes.
+
+<p align="center">
+  <img src="docs/app-list.jpg" width="49%" alt="The main list: posters, friends' average rating, share who liked it, and how many watched">
+  <img src="docs/site.jpg" width="49%" alt="The published page: the year's most-watched film, a seat for every person followed">
+</p>
 
 ## How it stays correct
 
@@ -57,7 +64,8 @@ Most of the work went into making the numbers trustworthy without me watching:
 | `letterboxd_friends_v2.py` | the scraper: one period → counts, ratings, likes, per-person data |
 | `letterboxd_refresh.py`, `letterboxd_tick.py` | refreshing, scheduling, catching up |
 | `letterboxd_selfcheck.py` | the hourly health checks |
-| `letterboxd_app.py` | local server + the app's interface |
+| `letterboxd_app.py` | the local server behind the app |
+| `ui/` | the app's interface: `index.html`, `app.css`, `app.js` |
 | `mac/main.swift` | the native macOS shell |
 | `letterboxd_publish.py`, `letterboxd_publish_el.py` | the English and Greek pages |
 | `letterboxd_posters.py`, `letterboxd_filmpages.py`, `letterboxd_wikidata.py` | posters, genres, Greek titles, film details |
@@ -66,6 +74,7 @@ Most of the work went into making the numbers trustworthy without me watching:
 | `letterboxd_net.py` | how requests are made |
 | `letterboxd_settings.py` | your username, read from a local file outside the repo |
 | `launchd/` | the background job definition |
+| `tests/` | tests for the subtle parts — tie-aware cuts, exclusions, renames, snapshots, the newsletter parser, showtimes |
 
 ## Running it
 
@@ -81,6 +90,12 @@ python3 letterboxd_app.py                                    # the interface, on
 All data — scraped lists, per-person files, caches, settings — lives in your home
 folder, never in this repository.
 
+Tests run on made-up data and need no network:
+
+```bash
+python3 -m unittest discover tests
+```
+
 ## A note on scraping
 
 This reads public Letterboxd pages. Letterboxd's terms don't allow automated
@@ -88,3 +103,7 @@ access, and its servers may refuse it; this version makes plain requests and
 reports when they're refused. It's a personal, non-commercial project — keep
 request rates low, keep the results to yourself, and don't use it to collect
 data about people who haven't agreed to it.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

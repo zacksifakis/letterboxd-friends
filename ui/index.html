@@ -1,0 +1,129 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Letterboxd — Friends Watched</title>
+<link rel="stylesheet" href="/ui/app.css"></head><body>
+<header>
+  <h1>Letterboxd · <span>Friends Watched</span></h1>
+  <div class="sub">what the people you follow have actually seen</div>
+  <div class="quit" id="quit">quit app ✕</div>
+</header>
+<main>
+
+  <div class="health" id="health" hidden></div>
+
+  <div class="card" id="riseCard" hidden>
+    <div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:8px">
+      <h4 class="madh">Rising across every list</h4>
+      <span id="riseSince" class="since">
+        <button type="button" data-days="7" class="on">last 7 days</button>
+        <button type="button" data-days="30">last 30 days</button>
+      </span>
+      <span class="muted" id="riseMeta"></span>
+    </div>
+    <div class="riselist" id="riseList"></div>
+    <div class="row" style="margin-top:10px;font-size:13px"><a href="#" id="riseMore"></a></div>
+  </div>
+
+  <div class="card" id="madCard" hidden>
+    <div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:8px">
+      <h4 class="madh" id="madHead">Playing in Madison</h4>
+      <span class="muted" id="madMeta"></span>
+    </div>
+    <div class="madlist" id="madList"></div>
+    <div class="row" style="margin-top:10px;gap:18px;font-size:13px">
+      <a href="#" id="madMore"></a>
+      <a href="#" id="madToggle"></a>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Year or decade</label>
+    <div class="row">
+      <select id="pick"></select>
+      <button id="run">Scrape</button>
+      <span class="muted" id="hint"></span>
+    </div>
+    <div id="progwrap" style="display:none">
+      <div class="bar"><i id="bar"></i></div>
+      <pre id="log"></pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Look up a film or a person</label>
+    <div class="row">
+      <input type="text" id="q" placeholder="Interstellar / Kubrick…" style="width:250px">
+      <span class="modes">
+        <button class="mode on" data-m="film">Film</button><button class="mode"
+          data-m="director">Director</button><button class="mode" data-m="actor">Actor</button>
+      </span>
+      <button class="ghost" id="go">Search</button>
+      <span class="muted" id="qhint"></span>
+    </div>
+    <div id="qout" class="dl" style="margin-top:14px;max-height:420px"></div>
+  </div>
+
+  <div class="card" id="diffCard" style="display:none">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h4 style="margin:0;font-size:13px;letter-spacing:.5px">WHAT CHANGED</h4>
+      <span id="diffSince" class="since">
+        <button type="button" data-since="last" class="on">since last scrape</button>
+        <button type="button" data-since="7d">last 7 days</button>
+        <button type="button" data-since="30d">last 30 days</button>
+      </span>
+      <span class="muted" id="diffMeta"></span>
+    </div>
+    <div class="cols">
+      <div><h4 id="gainHead">Gained watches</h4><div class="dl" id="gained"></div></div>
+      <div><h4 id="addHead">New films</h4><div class="dl" id="added"></div></div>
+    </div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none">
+    <div id="quality"></div>
+    <div class="stats">
+      <span>period <b id="sPeriod">—</b></span>
+      <span>films <b id="sFilms">—</b></span>
+      <span>top count <b id="sTop">—</b></span>
+      <span>scraped <b id="sAge">—</b></span>
+      <span><a id="dl" href="#">download CSV</a></span>
+      <span><a id="showDiff" href="#" style="display:none">what changed?</a></span>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input type="text" id="filter" placeholder="filter titles…" style="width:240px">
+      <span class="muted">seen by at least</span>
+      <select id="minSeen" style="min-width:0;font-size:14px;padding:9px 10px">
+        <option value="1">all</option>
+        <option value="2">2 friends</option>
+        <option value="5">5 friends</option>
+        <option value="10">10 friends</option>
+        <option value="25">25 friends</option>
+        <option value="30">30 friends</option>
+        <option value="50">50 friends</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="hideSeen"> Hide films I've seen</label>
+      <label class="chk"><input type="checkbox" id="onlyMadison"> Playing in Madison</label>
+      <label class="chk"><input type="checkbox" id="showPosters" checked> Posters</label>
+      <button type="button" id="recBtn" class="recbtn">Recommend me something</button>
+      <span class="muted" id="shown"></span>
+    </div>
+    <div class="recnote" id="recNote" hidden></div>
+    <table>
+      <thead><tr>
+        <th style="width:44px">#</th><th data-k="title">Film</th>
+        <th data-k="year" style="width:56px">Year</th>
+        <th data-k="rating" style="width:62px;text-align:right" title="friends' average; films with fewer than 10 ratings sort last">Rating</th>
+        <th data-k="liked" style="width:58px;text-align:right" title="share of watchers who liked it; films with fewer than 10 watchers sort last">Liked</th>
+        <th data-k="count" style="width:56px">Seen</th>
+        <th style="width:130px"></th>
+      </tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+    <div class="more" id="more">
+      <button class="ghost" id="loadMore">Load more</button>
+      <span class="muted" id="moreInfo"></span>
+    </div>
+  </div>
+
+</main>
+<script src="/ui/app.js"></script>
+</body></html>

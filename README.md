@@ -1,5 +1,9 @@
 # Letterboxd Friends
 
+[![tests](https://github.com/zacksifakis/letterboxd-friends/actions/workflows/tests.yml/badge.svg)](https://github.com/zacksifakis/letterboxd-friends/actions/workflows/tests.yml)
+
+**Live page:** [156 Seats](https://claude.ai/artifact/Fr6ihpLXsEDhyJCX2qXTVJ) · [Greek edition](https://claude.ai/artifact/Vv3WnrfMcULgqBWhdoimvM)
+
 *I grew up in video rental stores, back when picking a movie meant reading the backs of boxes and asking whoever was behind the counter what was good. Those stores are mostly gone, and the recommendations with them. This project is my attempt to bring a little of that back: what are the people whose taste I trust actually watching, and loving?*
 
 A personal project: for every year and decade of film, how many of the people I

@@ -23,6 +23,7 @@ next tick:
 """
 
 import os
+import re
 import sys
 import time
 import fcntl
@@ -39,6 +40,7 @@ CURRENT_YEAR_MAX_HOURS = 20
 DECADE_MAX_DAYS = 14
 DECADES_PER_TICK = 2
 REDO_AFTER_HOURS = 6
+STALE_TICK_HOURS = 4          # a decade takes under an hour awake
 
 
 def leaned_on_old_data(period, redo_after_hours=REDO_AFTER_HOURS):
@@ -74,11 +76,39 @@ def main():
     except BlockingIOError:
         lock.seek(0)
         holder = lock.read().strip() or "unknown"
-        if not dry:
-            refresh.log(f"tick skipped: another tick holds the lock ({holder})")
+        # A tick that has held the lock for hours is almost always one frozen by
+        # sleep mid-scrape. Stop it (and its scrape — data is only written when a
+        # scrape finishes, so nothing is lost) and start over, rather than letting
+        # it block every hour after it.
+        m = re.match(r"pid (\d+) since (\d\d):(\d\d):(\d\d)", holder)
+        age_h = None
+        if m:
+            try:
+                started = os.path.getmtime(os.path.join(HOME, ".letterboxd_tick.lock"))
+                age_h = (time.time() - started) / 3600
+            except OSError:
+                pass
+        if not dry and m and age_h is not None and age_h > STALE_TICK_HOURS:
+            stale = int(m.group(1))
+            refresh.log(f"tick: the tick holding the lock ({holder}) has run {age_h:.1f}h — "
+                        f"probably frozen by sleep; stopping it and starting fresh")
+            subprocess.run(["pkill", "-f", "letterboxd_friends_v2.py"], capture_output=True)
+            try:
+                os.kill(stale, 15)
+            except OSError:
+                pass
+            time.sleep(3)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                refresh.log("tick skipped: could not take over the stale lock")
+                return
         else:
-            print(f"another tick holds the lock ({holder})")
-        return
+            if not dry:
+                refresh.log(f"tick skipped: another tick holds the lock ({holder})")
+            else:
+                print(f"another tick holds the lock ({holder})")
+            return
     lock.seek(0)
     lock.truncate()
     lock.write(f"pid {os.getpid()} since {datetime.now():%H:%M:%S}")

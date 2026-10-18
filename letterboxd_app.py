@@ -998,7 +998,24 @@ def health():
     stale = sorted((d for d, a in ages.items() if a is None or a > 14),
                    key=lambda d: -(ages[d] if ages[d] is not None else 1e9))
 
+    # Is a tick running right now? A long one (a decade, or one the Mac slept
+    # through) can last hours, and "last started 4h ago" isn't "not running".
+    running_since = None
+    lock_path = os.path.join(HOME, ".letterboxd_tick.lock")
+    try:
+        holder = open(lock_path).read().strip()
+        m = re.match(r"pid (\d+)", holder)
+        if m:
+            os.kill(int(m.group(1)), 0)                     # raises if it's gone
+            ps = subprocess.run(["ps", "-p", m.group(1), "-o", "command="],
+                                capture_output=True, text=True).stdout
+            if "letterboxd_tick" in ps:
+                running_since = os.path.getmtime(lock_path)
+    except Exception:
+        pass
+
     return {"lastData": last, "lastLog": finished, "outcome": outcome,
+            "tickRunningSince": running_since,
             "tickLoaded": "local.letterboxd.tick" in listed, "lastTick": last_tick,
             "yearAge": (now - mtimes[year]) / 86400 if year in mtimes else None,
             "staleDecades": stale,

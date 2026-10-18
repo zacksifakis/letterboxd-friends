@@ -198,7 +198,7 @@ def main():
     for y in hot_years:
         age = refresh.age_days(y)
         if y not in years_due and (age is None or age * 24 > CURRENT_YEAR_MAX_HOURS):
-            refresh.log(f"--- {y} came due during this tick (the Mac was asleep) — refreshing now")
+            refresh.log(f"--- {y} came due while this tick was running — refreshing now")
             refresh.refresh(y)
 
     # Standing health checks. Serious trouble that wasn't there last hour

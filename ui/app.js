@@ -428,6 +428,10 @@ async function loadHealth(){
   const sinceTick = h.lastTick ? (now - h.lastTick) / 3600 : Infinity;
   const problems = [];
   if (!h.tickLoaded) problems.push("<b>auto-sync is not installed</b>");
+  else if (h.tickRunningSince) {
+    // a check is running — only worth a word if it's been going far too long
+    if ((now - h.tickRunningSince) / 3600 > 6) problems.push("<b>auto-sync has been running for hours</b>");
+  }
   else if (sinceTick > 3) problems.push(`<b>auto-sync hasn't run for ${h.lastTick ? ago(h.lastTick).replace(" ago", "") : "a while"}</b>`);
   if (h.yearAge === null || h.yearAge > 1.25) problems.push("<b>this year's data is out of date</b>");
   if (h.outcome === "failed") problems.push("<b>last refresh failed</b>");
@@ -444,7 +448,8 @@ async function loadHealth(){
       + (h.oldest ? ` (oldest: ${h.oldest[0]}, ${h.oldest[1] === null ? "never" : Math.round(h.oldest[1]) + " days"})` : "")
     : "all decades current");
   parts.push('<span class="sep">|</span>');
-  parts.push(h.lastTick ? `auto-sync last ran ${ago(h.lastTick)}` : "auto-sync hasn't run yet");
+  parts.push(h.tickRunningSince ? `auto-sync running now (started ${ago(h.tickRunningSince)})`
+             : h.lastTick ? `auto-sync last ran ${ago(h.lastTick)}` : "auto-sync hasn't run yet");
   if (problems.length) parts.push('<span class="sep">|</span>', problems.join(" \u00b7 "));
   el.innerHTML = parts.join(" ");
   el.className = problems.length ? "health warn" : "health";

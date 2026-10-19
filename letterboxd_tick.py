@@ -7,7 +7,8 @@ sleep and missed runs don't matter — anything overdue is simply done at the
 next tick:
 
   - Madison listings      every tick (one small feed request)
-  - this year and last    when their data is more than 20 hours old (last
+  - this year and last    on the first check of each day after 5 AM, or when
+                          their data is more than 20 hours old (last
                           year's films are still being watched a lot, so it
                           can't wait for its decade's fortnightly scrape)
   - decades               any more than 14 days old, stalest first, at most
@@ -41,6 +42,20 @@ DECADE_MAX_DAYS = 14
 DECADES_PER_TICK = 2
 REDO_AFTER_HOURS = 6
 STALE_TICK_HOURS = 4          # a decade takes under an hour awake
+
+
+def year_is_due(period):
+    """
+    This year and last refresh on the first check of each new day (after 5 AM),
+    so mornings start fresh, and also whenever the data is more than 20 hours
+    old, so a day the Mac stays asleep still gets one.
+    """
+    age = refresh.age_days(period)
+    if age is None or age * 24 > CURRENT_YEAR_MAX_HOURS:
+        return True
+    written = datetime.fromtimestamp(os.path.getmtime(refresh.csv_path(period)))
+    now = datetime.now()
+    return written.date() < now.date() and now.hour >= 5
 
 
 def leaned_on_old_data(period, redo_after_hours=REDO_AFTER_HOURS):
@@ -116,9 +131,7 @@ def main():
 
     year = str(datetime.now().year)
     hot_years = [year, str(datetime.now().year - 1)]
-    years_due = [y for y in hot_years
-                 if (refresh.age_days(y) is None or refresh.age_days(y) * 24 > CURRENT_YEAR_MAX_HOURS
-                     or leaned_on_old_data(y))]
+    years_due = [y for y in hot_years if year_is_due(y) or leaned_on_old_data(y)]
     year_due = bool(years_due)
 
     stale = []
@@ -196,8 +209,7 @@ def main():
     # come due meanwhile. Catch up now, so the self-check below judges fresh
     # data instead of raising a false "out of date" alarm.
     for y in hot_years:
-        age = refresh.age_days(y)
-        if y not in years_due and (age is None or age * 24 > CURRENT_YEAR_MAX_HOURS):
+        if y not in years_due and year_is_due(y):
             refresh.log(f"--- {y} came due while this tick was running — refreshing now")
             refresh.refresh(y)
 

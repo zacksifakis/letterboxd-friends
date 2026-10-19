@@ -74,7 +74,7 @@ def attach_posters(data, template_len):
     """
     Posters to embed: ({film number: base64 WebP}, {period: lowest seat count
     with a poster}). If the page would outgrow claude.ai's limit, years get
-    fewer posters (20, 15, 10, 5, then none) — decades and this year keep
+    fewer posters (40, 30, 20, 15, 10, 5, then none) — decades and this year keep
     their top 100.
     """
     try:
@@ -85,7 +85,7 @@ def attach_posters(data, template_len):
     index = {f[0]: i for i, f in enumerate(films)}
     lists = {p: [(films[i][0], c) for i, c in v["rows"]] for p, v in data["periods"].items()}
     size = template_len + len(pack(data))
-    for year_top in (lp.YEAR_TOP, 15, 10, 5, 0):
+    for year_top in (lp.YEAR_TOP, 30, 20, 15, 10, 5, 0):
         posters, floor = lp.embed(lists, index, year_top) if year_top else lp.embed(
             {p: v for p, v in lists.items() if lp.depth(p) == lp.TOP}, index, 0)
         extra = sum(len(b) + 12 for b in posters.values()) + 20 * len(floor)

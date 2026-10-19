@@ -5,10 +5,10 @@ claude.ai pages can only show images embedded in the page itself, and a page
 is capped at 16 MB, so posters go to the lists' top films:
 
   - every decade, and the current year:  the first 100 films
-  - every other year:                    the first 20
+  - every other year:                    the first 40
 
 A tie straddling the cut is kept whole (up to 20% extra) or left out whole, so
-posters always stop at a change of rank. ~2,300 films in all.
+posters always stop at a change of rank. ~4,500 films in all.
 
 Each poster is fetched once, as a 70x105 thumbnail, into
 ~/.letterboxd_cache/posters/<slug>.jpg. Later runs only fetch films that are
@@ -36,7 +36,7 @@ HOME = os.path.expanduser("~")
 CACHE = os.path.join(HOME, ".letterboxd_cache", "posters")
 INDEX = os.path.join(HOME, ".letterboxd_cache", "posters.json")
 TOP = 100                   # decades and the current year
-YEAR_TOP = 20               # every other year
+YEAR_TOP = 40               # every other year
 W, H = 70, 105              # stored size; shown at about half, so sharp on Retina
 WEBP_QUALITY = 65
 RETRY_FAILED_AFTER_DAYS = 3

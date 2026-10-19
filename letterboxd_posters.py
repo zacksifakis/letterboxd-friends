@@ -232,14 +232,18 @@ def embed(lists, film_index, year_top=YEAR_TOP):
     rank order and `film_index` maps slug -> the page's film number. Returns
     ({film number: base64 WebP}, {period: lowest count that gets a poster}).
 
-    A list only gets posters once every film in its top has been tried, so a
-    list is never half-filled while a fetch is still catching up.
+    A list gets posters once at least 90% of its top films have been tried, so
+    one film new to the top doesn't hide the rest; the odd missing poster
+    shows as a blank placeholder.
     """
     ix = _load_index()
     posters, floor = {}, {}
     for period, ranked in lists.items():
         top = top_slugs(ranked, depth(period, year_top))
-        if not top or not all(have(s) or s in ix for s in top):
+        # Show a list's posters once nearly all of them are in. Requiring every
+        # last one meant a single film new to the top 100 hid the whole list's.
+        tried = sum(1 for s in top if have(s) or s in ix)
+        if not top or tried < 0.9 * len(top):
             continue
         for s in top:
             if s in film_index and have(s):

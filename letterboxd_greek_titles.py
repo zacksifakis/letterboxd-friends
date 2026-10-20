@@ -398,7 +398,11 @@ def resolve_all():
     filmy = filmy_matches(all_films)
     out = {}
     for slug, (title, _, _) in all_films.items():
-        if slug in ath:
+        if slug in ath and slug in filmy and GREEK.search(filmy[slug]) and not GREEK.search(ath[slug]) \
+                and url_key(filmy[slug]).startswith(url_key(ath[slug]) + "_"):
+            # athinorama sometimes drops the Greek subtitle ("Arrival" vs "Arrival: Η Άφιξη")
+            out[slug] = (filmy[slug], "filmy")
+        elif slug in ath:
             out[slug] = (ath[slug], "athinorama")
         elif slug in filmy:
             out[slug] = (filmy[slug], "filmy")

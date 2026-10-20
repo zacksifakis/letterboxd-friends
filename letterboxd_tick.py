@@ -76,6 +76,20 @@ def leaned_on_old_data(period, redo_after_hours=REDO_AFTER_HOURS):
     return bool(m.get("filled") or m.get("missing")) and age * 24 > redo_after_hours
 
 
+def online(host="letterboxd.com", wait_s=0, every_s=15):
+    """True once `host` resolves, checking every `every_s` seconds for up to `wait_s`."""
+    import socket
+    deadline = time.time() + wait_s
+    while True:
+        try:
+            socket.getaddrinfo(host, 443)
+            return True
+        except OSError:
+            if time.time() >= deadline:
+                return False
+            time.sleep(every_s)
+
+
 def main():
     dry = "--dry-run" in sys.argv
 
@@ -150,6 +164,13 @@ def main():
         print(plan)
         return
     refresh.log(plan)
+
+    # Right after waking, the network often isn't back yet: a scrape started
+    # then fails at once and shows up as "couldn't reach Letterboxd". Give it a
+    # few minutes, and if it's still offline, try again next hour.
+    if not online(wait_s=180):
+        refresh.log("tick: offline (can't resolve letterboxd.com) — skipping; next hour will catch up")
+        return
 
     # Madison first: fast, and independent of any scrape going wrong.
     try:

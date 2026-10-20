@@ -169,7 +169,7 @@ def plots_for(films):
         import letterboxd_tmdb
     except Exception:
         return {}
-    kinds = {"el": 0, "mt": 1, "en": 2, "cl": 3}
+    kinds = {"el": 0, "en": 2, "cl": 3}
     index = {f[0]: i for i, f in enumerate(films)}
     return {index[s]: [t, kinds[k]] for s, (t, k) in letterboxd_tmdb.plots().items() if s in index}
 
@@ -185,7 +185,7 @@ def main():
     house = str(data["house"])
     kinds_used = {k for _, k in data["plots"].values()}
     note = ((" Περιλήψεις: TMDB. Αυτό το προϊόν χρησιμοποιεί το TMDB API αλλά δεν έχει την έγκριση"
-             " ή την πιστοποίηση του TMDB." if kinds_used & {0, 1, 2} else "")
+             " ή την πιστοποίηση του TMDB." if kinds_used & {0, 2} else "")
             + (" Οι σύντομες περιλήψεις με σχετική σήμανση είναι γραμμένες από το Claude."
                if 3 in kinds_used else ""))
     page = (TEMPLATE.replace("__HOUSE__", house).replace("__FOLLOW__", str(base.follow_size()))
@@ -522,7 +522,7 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
     return d;
   })();
   const HOUSE = DATA.house, FILMS = DATA.films, PERIODS = DATA.periods, DETAILS = DATA.details || {};
-  const PLOTS = DATA.plots || {};   // film -> [summary, 0 TMDB Greek | 1 translated | 2 English | 3 by Claude]
+  const PLOTS = DATA.plots || {};   // film -> [summary, 0 TMDB Greek | 2 English | 3 by Claude]
 
   /* ---------- posters: embedded in the page, for the top of each list ---------- */
   // claude.ai pages can only show images carried inside the page, so each
@@ -592,7 +592,7 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
     const p = PLOTS[i];
     if (!p) return "";
     const [text, kind] = p;
-    const note = kind === 1 ? "μετάφραση από τα αγγλικά" : kind === 2 ? "η περίληψη υπάρχει μόνο στα αγγλικά"
+    const note = kind === 2 ? "η περίληψη υπάρχει μόνο στα αγγλικά"
                : kind === 3 ? "σύντομη περίληψη γραμμένη από το Claude" : "";
     return `<p class="plot"${kind === 2 ? ' lang="en"' : ""}>${esc(text)}`
       + (note ? `<span class="pnote" lang="el">${note}</span>` : "") + `</p>`;

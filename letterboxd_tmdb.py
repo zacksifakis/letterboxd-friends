@@ -5,10 +5,10 @@ Needs your own free TMDB API key, saved (by you) in ~/.letterboxd_cache/tmdb_key
 Either the short "API Key" or the long "API Read Access Token" works.
 
 Films covered: every film that gets a poster (the top of each list) plus every
-film with Wikidata details. TMDB's own Greek summary comes first; when there is
-none, its English summary is used — translated into Greek once a translation
-has been added to ~/.letterboxd_cache/tmdb_el_translated.json, otherwise shown
-in English. The page labels which is which.
+film with Wikidata details. TMDB's own Greek summary comes first, then a short
+summary Claude wrote in its own words (~/.letterboxd_cache/plots_el_claude.json),
+then TMDB's English summary as is. TMDB's text is never translated: a
+translation would still be TMDB's text. The page labels which is which.
 
     python3 letterboxd_tmdb.py fetch            # fetch whatever is missing
     python3 letterboxd_tmdb.py fetch --max 200  # stop after 200
@@ -30,7 +30,6 @@ HOME = os.path.expanduser("~")
 CACHE_DIR = os.path.join(HOME, ".letterboxd_cache")
 KEY_FILE = os.path.join(CACHE_DIR, "tmdb_key")
 CACHE = os.path.join(CACHE_DIR, "tmdb_el.json")
-TRANSLATED = os.path.join(CACHE_DIR, "tmdb_el_translated.json")   # {slug: {"en": source, "el": translation}}
 WRITTEN = os.path.join(CACHE_DIR, "plots_el_claude.json")          # {slug: Greek summary written by Claude}
 WIKIDATA = os.path.join(CACHE_DIR, "wikidata_el.json")
 UA = "168SeatsPersonalProject/1.0 (personal film list; low request volume)"
@@ -213,26 +212,18 @@ def plots():
     """
     {slug: (text, kind)} for every film with a summary, best first:
       "el"  TMDB's own Greek summary (only with a TMDB key)
-      "cl"  a short Greek summary written by Claude (no key needed)
-      "mt"  TMDB's English summary, translated into Greek
-      "en"  TMDB's English summary, not yet translated
+      "cl"  a short Greek summary written by Claude in its own words
+      "en"  TMDB's English summary, as is
     """
-    tr = _load(TRANSLATED, {})
-    out = {s: (t, "cl") for s, t in _load(WRITTEN, {}).items() if t}
+    out = {}
+    for s, e in _load(CACHE, {}).items():
+        if e.get("en"):
+            out[s] = (e["en"], "en")
+    out.update({s: (t, "cl") for s, t in _load(WRITTEN, {}).items() if t})
     for s, e in _load(CACHE, {}).items():
         if e.get("plot"):
             out[s] = (e["plot"], "el")
-        elif e.get("en") and s not in out:
-            t = tr.get(s) or {}
-            out[s] = (t["el"], "mt") if t.get("el") and t.get("en") == e["en"] else (e["en"], "en")
     return out
-
-
-def untranslated(slugs=None):
-    """[(slug, English summary)] still waiting for a Greek translation, in target order."""
-    p = plots()
-    order = slugs or targets()
-    return [(s, p[s][0]) for s in order if s in p and p[s][1] == "en"]
 
 
 def status():
@@ -246,7 +237,6 @@ def status():
     print(f"  checked             : {have:,}")
     print(f"  Greek from TMDB     : {kinds.count('el'):,}")
     print(f"  written by Claude   : {kinds.count('cl'):,}")
-    print(f"  translated to Greek : {kinds.count('mt'):,}")
     print(f"  English only so far : {kinds.count('en'):,}")
     print(f"  no summary at all   : {have - len(kinds):,}")
 

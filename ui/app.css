@@ -103,12 +103,12 @@
   .chk input{accent-color:var(--green);width:15px;height:15px;cursor:pointer}
   tr.seen td.film a{color:var(--dim)}
   td.film{vertical-align:middle}
-  td.film > .pos{display:inline-block;vertical-align:middle;margin-right:12px;width:34px;height:51px;
+  td.film > .poster{display:inline-block;vertical-align:middle;margin-right:12px;width:34px;height:51px;
     border-radius:3px;background:var(--panel2);object-fit:contain;object-position:center;
     box-shadow:0 0 0 1px rgba(255,255,255,.07)}
   td.film > .fi{display:inline-block;vertical-align:middle}
   tbody.posters td{padding-block:6px}
-  tbody:not(.posters) td.film > .pos{display:none}
+  tbody:not(.posters) td.film > .poster{display:none}
   .tick{color:var(--green);font-size:11px;margin-right:6px}
   .who,.lists{all:unset;cursor:pointer;color:var(--blue);font-size:12px;margin-left:8px;white-space:nowrap}
   .who:hover,.lists:hover{text-decoration:underline}

@@ -61,7 +61,7 @@ def follow_size():
         return house_size()
 
 
-PAGE_LIMIT = 15_000_000        # claude.ai caps a page at 16 MB; keep a margin
+PAGE_LIMIT = 16_000_000        # claude.ai caps a page at 16 MiB (16.78 MB); keep a margin
 
 
 def pack(obj):

@@ -21,6 +21,7 @@ import letterboxd_publish as base  # noqa: E402  (shared CSV loading)
 
 HOME = os.path.expanduser("~")
 WIKIDATA = os.path.join(HOME, ".letterboxd_cache", "wikidata_el.json")
+GREEK_SCRIPT = re.compile("[\u0370-\u03ff\u1f00-\u1fff]")
 
 # Wikidata genre labels are long ("ταινία επιστημονικής φαντασίας"), so common
 # genres get the short names Greek listings use; anything unmapped is left out.
@@ -73,6 +74,14 @@ def build_data():
         pages, lb_genre = fp.load(), fp.GENRES_EL
     except Exception:
         pages, lb_genre = {}, {}
+    # The Greek release title, checked against athinorama, filmy.gr and IMDb
+    # before falling back to Letterboxd and Wikidata (letterboxd_greek_titles.py).
+    try:
+        import letterboxd_greek_titles as gt
+        official = gt.resolve_all()
+    except Exception as e:
+        print(f"Greek release titles unavailable ({e}); using Letterboxd and Wikidata only")
+        official = {}
 
     import csv, glob, datetime  # noqa: E401
     raw = {}
@@ -95,9 +104,17 @@ def build_data():
         packed = []
         for slug, (title, year, count) in sorted(rows.items(), key=lambda kv: -kv[1][2]):
             if slug not in index:
-                el = clean((films_wd.get(slug) or {}).get("el", ""))
-                if not el and (pages.get(slug) or {}).get("el"):
-                    el = clean(pages[slug]["el"][0])
+                if slug in official:
+                    el = official[slug][0]
+                    # A release under the original title (Poor Things) means no Greek one.
+                    if not GREEK_SCRIPT.search(el):
+                        el = ""
+                else:
+                    el = clean((films_wd.get(slug) or {}).get("el", ""))
+                    # Wikidata's Greek label is often just the English title; a
+                    # Greek-script title from Letterboxd beats it.
+                    if not GREEK_SCRIPT.search(el) and (pages.get(slug) or {}).get("el"):
+                        el = clean(pages[slug]["el"][0])
                 index[slug] = len(films)
                 films.append([slug, title, year, el if el and el != title else ""])
             elif year and not films[index[slug]][2]:

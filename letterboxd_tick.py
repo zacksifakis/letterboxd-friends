@@ -215,6 +215,18 @@ def main():
     except Exception as e:
         refresh.log(f"--- film pages: ERROR {e}")
 
+    # Greek release titles: IMDb's dataset monthly, athinorama and filmy.gr
+    # pages for films new to the lists — a few hundred requests at most.
+    try:
+        import letterboxd_greek_titles as gt
+        gt.log = lambda m: refresh.log("--- " + m) if " 0 pages not yet read" not in m else None
+        gt.refresh_imdb_titles()
+        gt.fetch_imdb_ids(list(gt.films()))
+        gt.fetch_athinorama(max_n=150)
+        gt.fetch_filmy(max_n=150)
+    except Exception as e:
+        refresh.log(f"--- Greek titles: ERROR {e}")
+
     # Greek summaries (TMDB) for films new to the pages — only once a key is saved.
     try:
         import letterboxd_tmdb

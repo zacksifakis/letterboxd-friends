@@ -34,8 +34,8 @@ everyone talking about right now — and which of them are playing in town this 
   to Letterboxd (following renames and catching mislinked entries), drops
   screenings once their showtime has passed, and links each venue to that
   film's page at the theater.
-- **Two published pages** — English and Greek (Greek titles, cast, genres from
-  Wikidata and Letterboxd), with posters for the top of every list, compressed to
+- **Two published pages** — English and Greek (Greek release titles checked
+  against athinorama.gr, filmy.gr and IMDb; cast and genres from Wikidata and Letterboxd), with posters for the top of every list, compressed to
   fit a 16 MB page limit (8.7 MB of data → 3.7 MB, decompressed in the browser).
 - **Excluding people** — anyone can be left out of every count; it's a recount
   of stored per-person data, not a re-scrape, and it survives username changes.
@@ -107,6 +107,7 @@ person checking its work against the real world.
 | `mac/main.swift` | the native macOS shell |
 | `letterboxd_publish.py`, `letterboxd_publish_el.py` | the English and Greek pages |
 | `letterboxd_posters.py`, `letterboxd_filmpages.py`, `letterboxd_wikidata.py` | posters, genres, Greek titles, film details |
+| `letterboxd_greek_titles.py` | Greek release titles, checked against athinorama.gr, filmy.gr and IMDb |
 | `letterboxd_people.py` | exclusions and recounts |
 | `letterboxd_history.py` | dated snapshots for week/month comparisons |
 | `letterboxd_net.py` | how requests are made |

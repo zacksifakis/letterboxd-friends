@@ -182,8 +182,8 @@ function likedCell(x){
 function rowHtml(x){
   const seen = SEEN.has(x.slug);
   const poster = POSTERS.has(x.slug)
-    ? `<img class="pos" src="/poster/${encodeURIComponent(x.slug)}.jpg" alt="" loading="lazy" decoding="async">`
-    : '<span class="pos"></span>';
+    ? `<img class="poster" src="/poster/${encodeURIComponent(x.slug)}.jpg" alt="" loading="lazy" decoding="async">`
+    : '<span class="poster"></span>';
   return `<tr class="${seen ? "seen" : ""}" data-slug="${x.slug}"><td class="rank">${rankOf.get(x.count)}</td>`
     + `<td class="film">${poster}<span class="fi">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
     + `<a href="${x.url}" target="_blank" rel="noopener">${x.title}</a>`

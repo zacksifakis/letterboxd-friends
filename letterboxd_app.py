@@ -102,6 +102,30 @@ def read_results(period):
     return rows
 
 
+def all_results():
+    """
+    Every film of every year in one ranking. Decades cover every film; a year
+    refreshed more recently than its decade (this year and last, daily) wins
+    for its films. Each row names the list it came from, for "who?".
+    """
+    idx = get_index()
+    merged = {}
+    for s in sorted(saved_periods(), key=lambda d: d["mtime"]):
+        for r in (idx.get(s["period"]) or {}).get("rows", []):
+            merged[r["slug"]] = dict(r, src=s["period"])
+    # Years derived from their decade have no per-person file of their own.
+    has_audit = {s["period"] for s in saved_periods()
+                 if os.path.exists(os.path.join(HOME, f"friends_watched_{s['period']}_per_friend.json"))}
+    for r in merged.values():
+        if r["src"] not in has_audit:
+            dec = str(r.get("year") or "")[:3] + "0s"
+            if dec in has_audit:
+                r["src"] = dec
+    rows = list(merged.values())
+    rows.sort(key=lambda d: -d["count"])
+    return rows
+
+
 _index = {"stamp": None, "data": None}
 
 
@@ -1268,6 +1292,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, saved_periods())
         if u.path == "/api/status":
             return self._send(200, job_snapshot())
+        if u.path == "/api/results" and period == "all":
+            saved = saved_periods()
+            return self._send(200, {"period": "all", "rows": all_results(),
+                                    "mtime": max((x["mtime"] for x in saved), default=0),
+                                    "hasPrev": False})
         if u.path == "/api/results":
             rows = read_results(period)
             if rows is None:

@@ -33,8 +33,10 @@ async function loadPicker(selected){
                     : `${p}   ·   not scraped`;
     return `<option value="${p}">${label}</option>`;
   };
+  const nFilms = saved.filter(x => x.period.endsWith("s")).reduce((a, x) => a + x.rows, 0);
   $("pick").innerHTML =
-      `<optgroup label="── DECADES ──">${decades.map(option).join("")}</optgroup>`
+      `<option value="all">All years   ·   ${nFilms.toLocaleString()} films</option>`
+    + `<optgroup label="── DECADES ──">${decades.map(option).join("")}</optgroup>`
     + `<optgroup label="── YEARS ──">${years.map(option).join("")}</optgroup>`;
 
   $("pick").value = selected || String(nowY);
@@ -44,6 +46,12 @@ async function loadPicker(selected){
 
 function onPick(){
   const p = $("pick").value;
+  if (p === "all") {                       // assembled from the saved lists; nothing to scrape
+    $("run").style.display = "none";
+    showResults(p);
+    return;
+  }
+  $("run").style.display = "";
   if (savedInfo.has(p)) {
     $("run").textContent = "Refresh";
     showResults(p);
@@ -227,6 +235,7 @@ function panelBelow(tr, kind){
 
 async function showWatchers(tr){
   const btn = tr.querySelector(".who"), slug = tr.dataset.slug;
+  const src = curPeriod === "all" ? (rows.find(r => r.slug === slug) || {}).src : curPeriod;
   if (btn.getAttribute("aria-expanded") === "true"){
     const panel = panelBelow(tr, "who");
     if (panel) panel.remove();
@@ -234,7 +243,7 @@ async function showWatchers(tr){
     return;
   }
   btn.setAttribute("aria-expanded", "true"); btn.textContent = "hide";
-  const res = await fetch(`/api/watchers?period=${encodeURIComponent(curPeriod)}&slug=${encodeURIComponent(slug)}`);
+  const res = await fetch(`/api/watchers?period=${encodeURIComponent(src)}&slug=${encodeURIComponent(slug)}`);
   const d = await res.json();
   const body = res.ok
     ? (d.watchers.length
@@ -330,9 +339,10 @@ async function showResults(period){
   rows = d.rows; curPeriod = d.period; maxCount = Math.max(1,...rows.map(r=>r.count));
   computeRanks();
   $("resultsCard").style.display="block";
-  $("sPeriod").textContent=d.period; $("sFilms").textContent=rows.length.toLocaleString();
+  $("sPeriod").textContent = d.period === "all" ? "All years" : d.period; $("sFilms").textContent=rows.length.toLocaleString();
   $("sTop").textContent=maxCount; $("sAge").textContent=ago(d.mtime);
   $("dl").href="/api/download?period="+encodeURIComponent(d.period);
+  $("dl").style.display = d.period === "all" ? "none" : "";
   $("showDiff").style.display = d.hasPrev ? "inline" : "none";
   $("diffCard").style.display="none";
   render();
@@ -593,3 +603,16 @@ loadHealth();
 (async()=>{ const s=await (await fetch("/api/status")).json();
   if(s.running){ $("progwrap").style.display="block"; $("run").disabled=true;
                  poll=setInterval(tick,1200); tick(); } })();
+
+// ⌘F / Ctrl+F: jump to the list's title filter (the list only draws rows as you
+// scroll, so the browser's own find would miss most films); with no list open,
+// to film search.
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "f") {
+    const box = $("resultsCard").style.display === "block" ? $("filter") : $("q");
+    e.preventDefault();
+    box.scrollIntoView({block: "center", behavior: "smooth"});
+    box.focus();
+    box.select();
+  }
+});

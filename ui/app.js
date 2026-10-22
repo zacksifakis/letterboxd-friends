@@ -100,17 +100,30 @@ function renderMadison(){
   $("madMeta").innerHTML = `${range} \u00b7 ${list.length} films \u00b7 from `
     + (d.latest ? `<a href="${d.latest.url}" target="_blank" rel="noopener">${d.latest.title}</a>` : "The Horizon Line")
     + `, The Horizon Line`;
-  // Regular runs vs one-off screenings, and what you could see today.
+  // Regular runs vs one-off screenings: a button per day of the week (from
+  // today on), each showing that day's screenings plus the all-week runs.
   const t = todayIso();
-  const playsToday = x => (x.days || []).includes(t) || (x.allWeek && x.start <= t && t <= x.end);
-  const keep = {any: () => true, today: playsToday, week: x => x.allWeek,
-                days: x => !x.allWeek && (x.days || []).length}[MAD.when] || (() => true);
+  const playsOn = (x, d) => (x.days || []).includes(d) || (x.allWeek && x.start <= d && d <= x.end);
+  const days = [];
+  if (list.length) {
+    for (let d = new Date(list[0].start + "T12:00"); ; d.setDate(d.getDate() + 1)) {
+      const iso = d.toLocaleDateString("en-CA");
+      if (iso > list[0].end) break;
+      if (iso >= t) days.push(iso);
+    }
+  }
+  if (MAD.when !== "any" && MAD.when !== "week" && !days.includes(MAD.when)) MAD.when = "any";
+  const keep = MAD.when === "any" ? () => true
+             : MAD.when === "week" ? x => x.allWeek
+             : x => playsOn(x, MAD.when);
   const filtered = list.filter(keep);
-  $("madWhenRow").hidden = !list.some(x => x.allWeek) || !list.some(x => (x.days || []).length);
-  document.querySelectorAll("#madWhen .mode").forEach(b => {
-    b.classList.toggle("on", b.dataset.when === MAD.when);
-    if (b.dataset.when === "today") b.hidden = MAD.showing !== "now";
-  });
+  const btn = (when, label, n) =>
+    `<button class="mode${MAD.when === when ? " on" : ""}" type="button" data-when="${when}">${label}`
+    + (n === undefined ? "" : ` <span class="n">${n}</span>`) + `</button>`;
+  $("madWhen").innerHTML = btn("any", "All")
+    + days.map(d => btn(d, d === t ? "Today" : shortDay(d), list.filter(x => playsOn(x, d)).length)).join("")
+    + (list.some(x => x.allWeek) ? btn("week", "All week", list.filter(x => x.allWeek).length) : "");
+  $("madWhenRow").hidden = !list.length;
   const shown = MAD.all ? filtered : filtered.slice(0, 10);
   $("madList").innerHTML = shown.map(x => {
     const seen = SEEN.has(x.slug);
@@ -438,13 +451,14 @@ paintPosters();
 try { $("hideSeen").checked = localStorage.getItem("hideSeen") === "1"; } catch (e) {}
 $("onlyMadison").onchange = render;
 const shortDay = iso => new Date(iso + "T12:00").toLocaleDateString("en-US", {weekday: "short", month: "numeric", day: "numeric"});
-document.querySelectorAll("#madWhen .mode").forEach(b => b.onclick = () => {
+$("madWhen").addEventListener("click", e => {
+  const b = e.target.closest(".mode");
+  if (!b) return;
   MAD.when = b.dataset.when; MAD.all = false; renderMadison();
 });
 $("madMore").onclick = e => { e.preventDefault(); MAD.all = !MAD.all; renderMadison(); };
 $("madToggle").onclick = e => {
   e.preventDefault(); MAD.showing = MAD.showing === "now" ? "soon" : "now"; MAD.all = false;
-  if (MAD.when === "today") MAD.when = "any";
   renderMadison();
 };
 $("hideSeen").onchange = () => {

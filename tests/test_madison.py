@@ -89,5 +89,25 @@ class PlayingNow(unittest.TestCase):
         self.assertEqual(soon["next"], (datetime.date.today() + datetime.timedelta(days=1)).isoformat())
 
 
+class WhenToCheck(unittest.TestCase):
+    """From Wednesday on, until that week's issue is in."""
+
+    def due(self, latest, today):
+        saved = app.load_madison
+        app.load_madison = lambda: {"latest": {"title": f"Screening Report {latest}"}}
+        try:
+            return app.madison_due(today)
+        finally:
+            app.load_madison = saved
+
+    def test_waits_from_wednesday_until_the_issue_arrives(self):
+        wed, thu = datetime.date(2026, 10, 21), datetime.date(2026, 10, 22)
+        self.assertTrue(self.due("10/14/2026", wed))
+        self.assertTrue(self.due("10/14/2026", thu))          # late issue: keep checking
+        self.assertFalse(self.due("10/21/2026", thu))         # it's in
+        self.assertFalse(self.due("10/21/2026", datetime.date(2026, 10, 27)))   # Tuesday after
+        self.assertFalse(self.due("10/20/2026", wed))         # posted a day early counts
+
+
 if __name__ == "__main__":
     unittest.main()

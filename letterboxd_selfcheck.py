@@ -194,9 +194,16 @@ def check_madison(problems, notes):
     h = age_hours(path)
     if h is None:
         return
-    if h > 36:
-        problems.append(("warn", f"Madison listings are {h / 24:.1f} days old",
-                         "the hourly job refreshes them every tick"))
+    try:
+        import letterboxd_app
+        due = letterboxd_app.madison_due()
+    except Exception:
+        due = True
+    # Between issues nothing is checked on purpose; only a check that's due
+    # and hasn't happened is a problem.
+    if due and h > 6:
+        problems.append(("warn", f"this week's Madison guide isn't in, and the feed wasn't checked for {h:.0f}h",
+                         "the hourly job checks it every hour from Wednesday until the issue arrives"))
         return
     try:
         with open(path) as f:

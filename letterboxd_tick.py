@@ -175,10 +175,11 @@ def main():
     # Madison first: fast, and independent of any scrape going wrong.
     try:
         import letterboxd_app
-        letterboxd_app.refresh_madison()
-        err = letterboxd_app.madison_job["error"]
-        if err:
-            refresh.log(f"--- madison listings: ERROR {err}")
+        if letterboxd_app.madison_due():          # Wednesdays on, until the week's issue is in
+            letterboxd_app.refresh_madison()
+            err = letterboxd_app.madison_job["error"]
+            if err:
+                refresh.log(f"--- madison listings: ERROR {err}")
     except Exception as e:
         refresh.log(f"--- madison listings: ERROR {e}")
 

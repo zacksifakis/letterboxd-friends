@@ -626,6 +626,22 @@ MADISON_FEED = "https://horizonlinemadison.substack.com/feed"
 madison_job = {"running": False, "error": ""}
 
 
+def madison_due(today=None):
+    """
+    The guide comes out on Wednesdays. From Wednesday on, check every hour
+    until that week's issue is in, then not again until the next Wednesday.
+    (A Tuesday post counts too; a late one is simply waited for.)
+    """
+    today = today or datetime.date.today()
+    wednesday = today - datetime.timedelta(days=(today.weekday() - 2) % 7)
+    data = load_madison() or {}
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", (data.get("latest") or {}).get("title", ""))
+    if not m:
+        return True
+    issue = datetime.date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+    return issue < wednesday - datetime.timedelta(days=1)
+
+
 def load_madison():
     if os.path.exists(MADISON):
         try:
@@ -868,14 +884,15 @@ def keep_ticking(every_minutes=60):
 
 def watch_madison(every_minutes=60):
     """
-    Re-read the feed every hour while the app is open. Unconditional on
-    purpose: a "skip if checked recently" rule with the same interval skips
-    every other check, which is how a new report went unnoticed for hours.
+    While the app is open, check the feed every hour whenever madison_due()
+    says this week's issue isn't in yet (no "checked recently" rule: one with
+    the same interval skips every other check).
     """
     while True:
         time.sleep(every_minutes * 60)
         try:
-            refresh_madison()
+            if madison_due():
+                refresh_madison()
         except Exception:
             pass
 

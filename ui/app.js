@@ -68,7 +68,7 @@ const CHUNK = 500;
 let viewRows = [], rendered = 0;
 
 let SEEN = new Set();
-let MAD = {now: new Map(), soon: new Map(), data: null, showing: "now", all: false};
+let MAD = {now: new Map(), soon: new Map(), data: null, showing: "now", all: false, when: "any"};
 
 const shortDate = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric"});
 const todayIso = () => new Date().toLocaleDateString("en-CA");
@@ -100,20 +100,34 @@ function renderMadison(){
   $("madMeta").innerHTML = `${range} \u00b7 ${list.length} films \u00b7 from `
     + (d.latest ? `<a href="${d.latest.url}" target="_blank" rel="noopener">${d.latest.title}</a>` : "The Horizon Line")
     + `, The Horizon Line`;
-  const shown = MAD.all ? list : list.slice(0, 10);
+  // Regular runs vs one-off screenings, and what you could see today.
+  const t = todayIso();
+  const playsToday = x => (x.days || []).includes(t) || (x.allWeek && x.start <= t && t <= x.end);
+  const keep = {any: () => true, today: playsToday, week: x => x.allWeek,
+                days: x => !x.allWeek && (x.days || []).length}[MAD.when] || (() => true);
+  const filtered = list.filter(keep);
+  $("madWhenRow").hidden = !list.some(x => x.allWeek) || !list.some(x => (x.days || []).length);
+  document.querySelectorAll("#madWhen .mode").forEach(b => {
+    b.classList.toggle("on", b.dataset.when === MAD.when);
+    if (b.dataset.when === "today") b.hidden = MAD.showing !== "now";
+  });
+  const shown = MAD.all ? filtered : filtered.slice(0, 10);
   $("madList").innerHTML = shown.map(x => {
     const seen = SEEN.has(x.slug);
-    const today = x.next && x.next === todayIso();
+    const dayTag = d => `<span class="tag day${d === t ? " is-today" : ""}">${d === t ? "today" : shortDay(d)}</span>`;
+    const when = x.allWeek ? `<span class="tag week" title="a regular run, any day this week">all week</span>`
+                           : (x.days || []).slice(0, 4).map(dayTag).join("");
     return `<div class="mad"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
       + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
       + `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
       + hitStats(x)
       + (x.section ? `<span class="tag">${x.section}</span>` : "")
-      + (today ? `<span class="tag today">today</span>` : "")
+      + when
       + (x.note ? `<span class="tag">${x.note}</span>` : "") + `</div>`
       + `<div class="mv">${venueLinks(x) || "venues not listed"}</div></div></div>`;
   }).join("");
-  $("madMore").textContent = list.length > 10 ? (MAD.all ? "show fewer" : `show all ${list.length}`) : "";
+  if (!filtered.length) $("madList").innerHTML = '<div class="muted">nothing matching that this week</div>';
+  $("madMore").textContent = filtered.length > 10 ? (MAD.all ? "show fewer" : `show all ${filtered.length}`) : "";
   const other = MAD.showing === "now" ? d.soon.length : d.now.length;
   $("madToggle").textContent = other ? (MAD.showing === "now" ? `coming next week (${other})` : "back to this week") : "";
   $("madCard").hidden = false;
@@ -423,9 +437,15 @@ $("showPosters").onchange = () => {
 paintPosters();
 try { $("hideSeen").checked = localStorage.getItem("hideSeen") === "1"; } catch (e) {}
 $("onlyMadison").onchange = render;
+const shortDay = iso => new Date(iso + "T12:00").toLocaleDateString("en-US", {weekday: "short", month: "numeric", day: "numeric"});
+document.querySelectorAll("#madWhen .mode").forEach(b => b.onclick = () => {
+  MAD.when = b.dataset.when; MAD.all = false; renderMadison();
+});
 $("madMore").onclick = e => { e.preventDefault(); MAD.all = !MAD.all; renderMadison(); };
 $("madToggle").onclick = e => {
-  e.preventDefault(); MAD.showing = MAD.showing === "now" ? "soon" : "now"; MAD.all = false; renderMadison();
+  e.preventDefault(); MAD.showing = MAD.showing === "now" ? "soon" : "now"; MAD.all = false;
+  if (MAD.when === "today") MAD.when = "any";
+  renderMadison();
 };
 $("hideSeen").onchange = () => {
   try { localStorage.setItem("hideSeen", $("hideSeen").checked ? "1" : "0"); } catch (e) {}
@@ -516,8 +536,8 @@ async function tick(){
 }
 
 let mode = "film";
-document.querySelectorAll(".mode").forEach(b => b.onclick = ()=>{
-  document.querySelectorAll(".mode").forEach(x=>x.classList.remove("on"));
+document.querySelectorAll(".mode[data-m]").forEach(b => b.onclick = ()=>{
+  document.querySelectorAll(".mode[data-m]").forEach(x=>x.classList.remove("on"));
   b.classList.add("on"); mode = b.dataset.m;
 });
 

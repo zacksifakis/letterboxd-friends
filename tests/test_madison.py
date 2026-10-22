@@ -78,6 +78,12 @@ class PlayingNow(unittest.TestCase):
         now = {x["slug"] for x in app.madison_listings()["now"]}
         self.assertEqual(now, {"soon", "running"})
 
+    def test_regular_runs_and_dated_screenings_are_told_apart(self):
+        now = {x["slug"]: x for x in app.madison_listings()["now"]}
+        self.assertTrue(now["running"]["allWeek"])
+        self.assertFalse(now["soon"]["allWeek"])
+        self.assertEqual(now["soon"]["days"], [(datetime.date.today() + datetime.timedelta(days=1)).isoformat()])
+
     def test_next_showing_is_reported(self):
         soon = next(x for x in app.madison_listings()["now"] if x["slug"] == "soon")
         self.assertEqual(soon["next"], (datetime.date.today() + datetime.timedelta(days=1)).isoformat())

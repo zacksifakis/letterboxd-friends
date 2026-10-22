@@ -952,7 +952,12 @@ def madison_listings():
             upcoming += [t.date() for t in ts if t >= moment]
         if bucket is now and e["venues"] and not live:
             continue
-        item = bucket.setdefault(e["slug"], {**e, "venues": [], "links": {}, "next": ""})
+        item = bucket.setdefault(e["slug"], {**e, "venues": [], "links": {}, "next": "",
+                                             "allWeek": False, "days": []})
+        # A venue line with no date is a regular run ("all week"); dated lines
+        # are one-off screenings on those days.
+        item["allWeek"] = item["allWeek"] or any(not venue_times(v) for v in live)
+        item["days"] = sorted(set(item["days"]) | {d.isoformat() for d in upcoming})
         for v in live:
             if v not in item["venues"]:
                 item["venues"].append(v)

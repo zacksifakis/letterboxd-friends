@@ -897,10 +897,8 @@ def watch_madison(every_minutes=60):
             pass
 
 
-def madison_listings():
-    """What's playing now and next, each film ranked by how many friends watched it."""
-    data = load_madison() or {}
-    today = datetime.date.today()
+def best_and_stats():
+    """{slug: (most friends in any list, that list)}, {slug: rating/liked}."""
     best, stats = {}, {}
     for period, blob in get_index().items():
         for r in blob["rows"]:
@@ -911,6 +909,14 @@ def madison_listings():
                     (r["slug"] not in stats or not period.endswith("s")):
                 stats[r["slug"]] = {"rating": r.get("rating"), "ratings": r.get("ratings", 0),
                                     "liked": r.get("liked")}
+    return best, stats
+
+
+def madison_listings():
+    """What's playing now and next, each film ranked by how many friends watched it."""
+    data = load_madison() or {}
+    today = datetime.date.today()
+    best, stats = best_and_stats()
 
     # Two guides overlap: last week's issue previews a week that this week's
     # issue then lists properly. For any week, use only the newest guide that
@@ -991,6 +997,54 @@ def madison_listings():
     return {"asOf": data.get("asOf", ""), "latest": data.get("latest"),
             "now": order(now), "soon": order(soon),
             "running": madison_job["running"], "error": madison_job["error"]}
+
+
+# ------------------------------------------------- films on any web page
+
+IMDB_LB = os.path.join(HOME, ".letterboxd_cache", "imdb_to_letterboxd.json")     # tt -> [slug, title, year]
+
+
+def page_films(url):
+    """The films on a web page, ranked by how many people you follow have seen them."""
+    import letterboxd_pagefilms as pf
+    res = pf.films_on(url)
+    films = pf.index()["films"]
+    best, stats = best_and_stats()
+    try:
+        with open(IMDB_LB) as f:
+            imdb_lb = json.load(f)
+    except Exception:
+        imdb_lb = {}
+    looked_up, out = 0, []
+    for f in res["films"]:
+        key = f["key"]
+        if key.startswith("imdb:"):
+            tt = key[5:]
+            if tt not in imdb_lb and looked_up < 15:      # ask Letterboxd which film it is
+                imdb_lb[tt] = pf.resolve_imdb(tt)
+                looked_up += 1
+            hit = imdb_lb.get(tt)
+            if not hit:
+                out.append({"slug": "", "imdb": tt, "title": f["text"], "year": "", "seats": 0,
+                            "text": f["text"], "how": f["how"], "times": f["times"],
+                            "rating": None, "ratings": 0, "liked": None})
+                continue
+            slug, title, year = hit
+        else:
+            slug = key
+            title, year, _ = films.get(slug, (slug.replace("-", " ").title(), "", 0))
+        seats = best.get(slug, (0, ""))
+        out.append({"slug": slug, "title": title, "year": year, "seats": seats[0], "seatsIn": seats[1],
+                    "text": f["text"] if f["text"] and f["text"] != title else "",
+                    "how": f["how"], "times": f["times"],
+                    **stats.get(slug, {"rating": None, "ratings": 0, "liked": None})})
+    if looked_up:
+        with open(IMDB_LB, "w") as fh:
+            json.dump(imdb_lb, fh)
+    seen = set()
+    out = [x for x in out if not (x["slug"] and (x["slug"] in seen or seen.add(x["slug"])))]
+    out.sort(key=lambda x: -x["seats"])
+    return {"url": res["url"], "title": res["title"], "films": out, "unmatched": res["unmatched"]}
 
 
 # ------------------------------------------------- are the scheduled runs ok?
@@ -1326,6 +1380,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"period": period, "rows": rows,
                                     "mtime": os.path.getmtime(csv_path(period)),
                                     "hasPrev": os.path.exists(prev_path(period))})
+        if u.path == "/api/page":
+            import letterboxd_pagefilms as pf
+            try:
+                return self._send(200, page_films((q.get("url") or [""])[0].strip()))
+            except pf.PageError as e:
+                return self._send(400, {"error": str(e)})
+            except Exception as e:
+                return self._send(502, {"error": f"couldn't read that page: {e}"})
         if u.path == "/api/search":
             return self._send(200, {"hits": search_films((q.get("q") or [""])[0])})
         if u.path == "/api/person":
@@ -1457,7 +1519,15 @@ if __name__ == "__main__":
     maybe_refresh_my_films()          # your own watched list, in the background
     threading.Thread(target=watch_my_films, daemon=True).start()
     maybe_refresh_liked_lists()       # and the lists you've liked
-    threading.Thread(target=refresh_madison, daemon=True).start()   # always check on launch
+    if madison_due():                 # from Wednesday until the week's guide is in
+        threading.Thread(target=refresh_madison, daemon=True).start()
+    def warm_page_index():            # so the first pasted link doesn't wait ~15s
+        try:
+            import letterboxd_pagefilms
+            letterboxd_pagefilms.index()
+        except Exception:
+            pass
+    threading.Thread(target=warm_page_index, daemon=True).start()
     threading.Thread(target=watch_madison, daemon=True).start()
     run_tick()                                                   # catch up on launch
     threading.Thread(target=keep_ticking, daemon=True).start()   # and hourly while open

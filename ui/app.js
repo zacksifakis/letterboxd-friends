@@ -137,7 +137,9 @@ function renderMadison(){
       + (x.section ? `<span class="tag">${x.section}</span>` : "")
       + when
       + (x.note ? `<span class="tag">${x.note}</span>` : "") + `</div>`
-      + `<div class="mv">${venueLinks(x) || "venues not listed"}</div></div></div>`;
+      + `<div class="mv">${venueLinks(x) || "venues not listed"}`
+      + (x.allWeek ? ` \u00b7 <a href="https://www.google.com/search?q=${encodeURIComponent(x.title + " showtimes Madison WI")}" target="_blank" rel="noopener">showtimes</a>` : "")
+      + `</div></div></div>`;
   }).join("");
   if (!filtered.length) $("madList").innerHTML = '<div class="muted">nothing matching that this week</div>';
   $("madMore").textContent = filtered.length > 10 ? (MAD.all ? "show fewer" : `show all ${filtered.length}`) : "";
@@ -650,3 +652,43 @@ document.addEventListener("keydown", e => {
     box.select();
   }
 });
+
+
+// Films on any web page (a cinema's programme, a festival lineup), ranked by
+// how many people you follow have seen them.
+async function findPageFilms(){
+  const url = $("pageUrl").value.trim();
+  if (!url) return;
+  try { localStorage.setItem("pageUrl", url); } catch (e) {}
+  $("pageGo").disabled = true;
+  $("pageOut").innerHTML = '<div class="muted">reading the page\u2026</div>';
+  try {
+    const res = await fetch("/api/page?url=" + encodeURIComponent(url));
+    const d = await res.json();
+    if (!res.ok) { $("pageOut").innerHTML = `<div class="muted">${d.error}</div>`; return; }
+    const row = x => {
+      const seen = x.slug && SEEN.has(x.slug);
+      const name = x.slug
+        ? `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
+        : `<a href="https://www.imdb.com/title/${x.imdb}/" target="_blank" rel="noopener">${x.title}</a>`;
+      return `<div class="mad"><span class="mseats ${x.seats ? "" : "none"}">${x.seats || "\u2014"}</span>`
+        + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
+        + `${name} <span class="muted">${x.year || ""}</span>${hitStats(x)}`
+        + (x.text ? `<span class="tag" title="as written on the page">${x.text}</span>` : "")
+        + (x.how === "spelled in Greek" ? `<span class="tag" title="matched by sound — check it">\u2248</span>` : "")
+        + `</div>` + (x.times.length ? `<div class="mv">${x.times.join(" \u00b7 ")}</div>` : "")
+        + `</div></div>`;
+    };
+    $("pageOut").innerHTML =
+        `<div class="muted" style="margin-bottom:6px">${d.films.length} films on <a href="${d.url}" target="_blank" rel="noopener">${d.title}</a></div>`
+      + `<div class="madlist">${d.films.map(row).join("") || '<div class="muted">no films recognised on that page</div>'}</div>`
+      + (d.unmatched.length ? `<div class="muted" style="margin-top:8px">Couldn't place: ${d.unmatched.join(", ")}</div>` : "");
+  } catch (e) {
+    $("pageOut").innerHTML = '<div class="muted">something went wrong reading that page</div>';
+  } finally {
+    $("pageGo").disabled = false;
+  }
+}
+$("pageGo").onclick = findPageFilms;
+$("pageUrl").addEventListener("keydown", e => { if (e.key === "Enter") findPageFilms(); });
+try { $("pageUrl").value = localStorage.getItem("pageUrl") || ""; } catch (e) {}

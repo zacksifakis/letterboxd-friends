@@ -107,6 +107,7 @@ person checking its work against the real world.
 | `mac/main.swift` | the native macOS shell |
 | `letterboxd_publish.py`, `letterboxd_publish_el.py` | the English and Greek pages |
 | `letterboxd_posters.py`, `letterboxd_filmpages.py`, `letterboxd_wikidata.py` | posters, genres, Greek titles, film details |
+| `letterboxd_pagefilms.py` | films on any web page (a cinema's programme, a festival lineup) matched to Letterboxd |
 | `letterboxd_greek_titles.py` | Greek release titles, checked against athinorama.gr, filmy.gr and IMDb |
 | `letterboxd_people.py` | exclusions and recounts |
 | `letterboxd_history.py` | dated snapshots for week/month comparisons |

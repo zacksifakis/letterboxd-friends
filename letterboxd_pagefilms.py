@@ -43,11 +43,16 @@ class PageError(Exception):
 def allowed(url):
     parts = urllib.parse.urlsplit(url)
     rp = urllib.robotparser.RobotFileParser()
-    rp.set_url(f"{parts.scheme}://{parts.netloc}/robots.txt")
+    # Read it ourselves, with our user agent: Python's default one gets refused
+    # by some sites, and a refusal would wrongly count as "keep out".
+    import requests
     try:
-        rp.read()
+        r = requests.get(f"{parts.scheme}://{parts.netloc}/robots.txt", headers={"User-Agent": UA}, timeout=15)
     except Exception:
         return True                       # no robots.txt to honour
+    if r.status_code != 200 or "<html" in r.text[:500].lower():
+        return True
+    rp.parse(r.text.splitlines())
     return rp.can_fetch(UA, url)
 
 
@@ -94,12 +99,15 @@ _EN = [("ph", "f"), ("th", "t"), ("ck", "k"), ("qu", "kv"), ("q", "k"), ("x", "k
 
 def sounds(s, greek):
     """A rough pronunciation key, so 'Κλέι Φέις' and 'Clayface' land close together."""
+    if greek:                                    # "Κλέι": é and ι said apart, as in "clay"
+        s = re.sub(r"([έάό])ι", lambda m: {"έ": "εj", "ά": "αj", "ό": "οj"}[m.group(1)], s.lower())
     s = norm(s).replace(" ", "")
     if greek:
         for a, b in _GR:
             s = s.replace(a, b)
         s = "".join(_GR1.get(c, c) for c in s)
     else:
+        s = s.replace("aw", "o")                # "Paw" as Greek writes it: Πο
         s = re.sub(r"c(?=[eiy])", "s", s)
         s = s.replace("c", "k")
         s = re.sub(r"a([bdfgklmnprstvz])e\b", r"ei\1", s)    # face → feis
@@ -107,7 +115,8 @@ def sounds(s, greek):
         for a, b in _EN:
             s = s.replace(a, b)
         s = re.sub(r"e\b|e$", "", s)            # silent final e
-    s = s.replace("z", "s").replace("h", "")
+        s = s.replace("nt", "d").replace("mp", "b")   # as Greek spells them: ντ, μπ
+    s = s.replace("j", "i").replace("z", "s").replace("h", "").replace("v", "b")   # β is b or v
     return re.sub(r"(.)\1+", r"\1", s)
 
 
@@ -136,11 +145,17 @@ def index():
     for tt, el in gt.imdb_greek().items():
         by_title.setdefault(norm(el), []).append(tt2slug.get(tt, "imdb:" + tt))
     this_year = time.localtime().tm_year
-    recent = [(sounds(t, False), slug) for slug, (t, y, _) in films.items()
-              if y.isdigit() and int(y) >= this_year - 1]
-    _index.update(at=time.time(), data={"films": films, "by_title": by_title,
-                                        "tt2slug": tt2slug, "recent": recent})
+    recent_films = [(slug, t) for slug, (t, y, _) in films.items() if y.isdigit() and int(y) >= this_year - 1]
+    recent = [(sounds(t, False), slug) for slug, t in recent_films]
+    recent_heads = [(norm(head(t)), sounds(head(t), False), slug) for slug, t in recent_films if norm(head(t))]
+    _index.update(at=time.time(), data={"films": films, "by_title": by_title, "tt2slug": tt2slug,
+                                        "recent": recent, "recent_heads": recent_heads})
     return _index["data"]
+
+
+def head(title):
+    """The part of a title before '&', ':' or a dash — 'Minions' of 'Minions & Monsters'."""
+    return re.split(r"\s*(?:&|:|\s[-–]\s|\band\b|\bκαι\b)\s*", title, maxsplit=1)[0]
 
 
 def _pick(cands, films, hint_year=None):
@@ -156,6 +171,17 @@ def _pick(cands, films, hint_year=None):
     return cands[0]
 
 
+LABELS = re.compile(r"^(εισιτηρια|ωρεσ προβολων|προβολεσ|πρεμιερα|προσεχωσ|τρειλερ|trailer|tickets?|showtimes|"
+                    r"book now|buy tickets|αγοραστε.*|περισσοτερα|δειτε περισσοτερα|more info|απορρητο)$")
+
+
+def is_label(line):
+    """Buttons, headings and footers that happen to share a film's title."""
+    l = norm(line)
+    return bool(LABELS.match(l)) or bool(re.search(r"©|cookie", line, re.I)) or \
+        bool(re.search(r"αιθουσα\s*(\d|[α-ω]\b)", l))
+
+
 def _recent(slug, films, years=2):
     y = films.get(slug, ("", "", 0))[1]
     return y.isdigit() and int(y) >= time.localtime().tm_year - years
@@ -168,11 +194,11 @@ def match_line(line, ix, listing=False):
     one-word and sound-alike matches are trusted; elsewhere a one-word line
     ("Thursday", "Other") only counts for a recent film.
     """
-    if not 2 <= len(line) <= 90 or len(line.split()) > 14 or line.startswith("("):
+    if not 2 <= len(line) <= 90 or len(line.split()) > 14 or line.startswith("(") or is_label(line):
         return None
     year = re.search(r"\((\d{4})\)|\b(19\d\d|20\d\d)\b", line)
     hint = (year.group(1) or year.group(2)) if year else None
-    bare = re.sub(r"\(.*?\)|\[.*?\]|\b(19|20)\d\d\b", " ", line).strip(" -–:·|")
+    bare = re.sub(r"\(.*?\)|\[.*?\]|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b(19|20)\d\d\b", " ", line).strip(" -–:·|")
     for text in (line, bare):
         key = norm(text)
         hit = ix["by_title"].get(key) if key else None
@@ -183,17 +209,32 @@ def match_line(line, ix, listing=False):
             if len(key.split()) == 1 and slug.startswith("imdb:"):
                 return None
             return slug, "greek title" if GREEK.search(text) else "title"
+    # Half-translated titles: "Minions & Τέρατα", "Paw Patrol: Κουτάβια και Δεινόσαυροι",
+    # or the same spelled in Greek ("Μίνιον & Τέρατα"). The first part names the
+    # film; it's matched against the first part of recent films' titles.
+    first = head(bare)
+    if first != bare and len(norm(first)) >= 5:
+        f = norm(first)
+        exact = [sl for h, _, sl in ix["recent_heads"] if h == f]
+        if exact and not GREEK.search(first):
+            return _pick(exact, ix["films"], hint), "title (first part)"
+        if listing and GREEK.search(first):
+            key = sounds(first, True)
+            best = max(((difflib.SequenceMatcher(None, key, k).ratio(), sl) for _, k, sl in ix["recent_heads"]
+                        if abs(len(k) - len(key)) <= 2), default=(0, None))
+            if best[0] >= 0.88:
+                return best[1], "spelled in Greek"
     if listing and GREEK.search(bare) and len(norm(bare)) >= 4:
         key = sounds(bare, True)
         best = max(((difflib.SequenceMatcher(None, key, k).ratio(), s) for k, s in ix["recent"]
                     if abs(len(k) - len(key)) <= 3), default=(0, None))
-        need = 1.0 if len(key) < 5 else 0.8
+        need = 1.0 if len(key) < 5 else 0.88
         if best[0] >= need:
             return best[1], "spelled in Greek"
     return None
 
 
-def films_on(url, limit=150):
+def films_on(url, limit=150, cross_check=True):
     """{"url", "title", "films": [...], "unmatched": [...]} for a web page."""
     url, page = fetch(url)
     ix = index()
@@ -213,25 +254,228 @@ def films_on(url, limit=150):
 
     lines = page_lines(page)
     unmatched = []
+    page_title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
+    site_words = set(norm(htmlmod.unescape(page_title.group(1))).split()) if page_title else set()
     for i, line in enumerate(lines):
         # notes in brackets ("(Ντοκιμαντέρ)", "(μτγλτ)") can sit between a title and its times
         nxt = [l for l in lines[i + 1:i + 6] if not (l.startswith("(") and l.endswith(")"))]
-        after = [l for l in nxt[:3] if TIME.search(l) and not match_line(l, ix)][:3]
+        after = [l for l in nxt[:3] if TIME.search(l) and "©" not in l and not match_line(l, ix)][:3]
         listing = bool(after) and bool(nxt) and nxt[0] in after
+        if any(upcoming(l) for l in [line] + after):
+            continue                            # "coming soon": not playing yet, so left out
         hit = match_line(line, ix, listing)
         if hit:
             add(hit[0], hit[1], line, after)
         elif listing and not TIME.search(line) and not re.search(r"\d{3,4}\b", line) and 3 <= len(line) <= 60 \
                 and len(line.split()) <= 7 and not line.endswith(".") and not line.startswith("(") \
-                and not re.search(r"www\.|https?:|cinema|\bpage\b", line, re.I):
+                and not re.search(r"www\.|https?:|cinema|\bpage\b", line, re.I) and not is_label(line) \
+                and not set(norm(line).split()) <= site_words:
             unmatched.append(line)              # looks like a programme entry we couldn't place
         if len(order) >= limit:
             break
 
+    # Titles that link to the cinema's own page for the film: that page often
+    # names the director, whose Letterboxd page settles which film it is.
+    site = urllib.parse.urlsplit(url).netloc
+    links = {}
+    for href, text in re.findall(r'<a\b[^>]*href="([^"#]+)"[^>]*>(.*?)</a>', page, re.S | re.I):
+        text = re.sub(r"\s+", " ", htmlmod.unescape(re.sub(r"<[^>]+>", " ", text))).strip()
+        href = urllib.parse.urljoin(url, href)
+        if text and urllib.parse.urlsplit(href).netloc == site and \
+                re.search(r"/(movies?|films?|tainies|tainia|ταινίες)/[^/]+", href, re.I):
+            links.setdefault(text, href)
+    placed = {undated(found[k]["text"]) for k in order}
+    tried, done = 0, set()
+    for text, href in links.items():
+        name = undated(text)
+        if name in placed or name in done or tried >= 20 or not 2 <= len(name) <= 80 or upcoming(text) \
+                or is_label(name) or set(norm(name).split()) <= site_words or match_line(name, ix, True):
+            continue
+        tried += 1
+        done.add(name)
+        hit = by_director(href, ix)
+        time.sleep(1)
+        if hit:
+            add(hit, "director", name)
+            placed.add(name)
+        else:
+            unmatched.append(name)
+    unmatched = [u for u in dict.fromkeys(undated(u) for u in unmatched) if u not in placed]
+
+    if cross_check:
+        helper = CROSS_CHECK.get(site.replace("www.", ""))
+        if helper:
+            unmatched = cross_checked(found, order, unmatched, helper, ix)
+
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
     return {"url": url, "title": htmlmod.unescape(title.group(1).strip()) if title else url,
-            "films": [found[k] for k in order],
-            "unmatched": list(dict.fromkeys(unmatched))[:30]}
+            "films": [found[k] for k in order], "links": {undated(t): h for t, h in links.items()},
+            "unmatched": list(dict.fromkeys(unmatched))[:30],
+            "checkedWith": CROSS_CHECK.get(site.replace("www.", "")) if cross_check else None}
+
+
+DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
+
+
+def undated(text):
+    return re.sub(r"\s+", " ", DATE.sub(" ", text)).strip()
+
+
+def upcoming(text):
+    """True when the text carries a date that's still ahead: a "coming soon" premiere."""
+    import datetime
+    for d, m, y in DATE.findall(text):
+        try:
+            if datetime.date(int(y), int(m), int(d)) > datetime.date.today():
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def latin_name(greek_name):
+    """A person's name as spelled in English, from Wikidata, given its Greek spelling."""
+    import requests
+    try:
+        r = requests.get("https://www.wikidata.org/w/api.php", timeout=20,
+                         headers={"User-Agent": "168SeatsPersonalProject/1.0 (personal film list)"},
+                         params={"action": "wbsearchentities", "search": greek_name, "language": "el",
+                                 "uselang": "en", "type": "item", "limit": 5, "format": "json"})
+        for hit in r.json().get("search", []):
+            desc = (hit.get("description") or "").lower()
+            if any(w in desc for w in ("director", "filmmaker", "screenwriter", "actor", "actress")):
+                return hit.get("label")
+    except Exception:
+        pass
+    return None
+
+
+def by_director(film_url, ix):
+    """
+    The film a cinema's film page is about, from the director it names: the
+    most recent of that director's films on Letterboxd. Only Latin-script
+    names (a Greek spelling of a foreign name can't be turned into a URL).
+    """
+    try:
+        if not allowed(film_url):
+            return None
+        _, page = fetch(film_url)
+    except Exception:
+        return None
+    text = " ".join(page_lines(page))
+    m = re.search(r"(?:Σκηνοθεσία|Directed by|Director|Regie|Réalisation)\s*:?\s*([A-Za-zÀ-ÿͰ-Ͽἀ-῿.'’ -]{4,60}?)"
+                  r"(?=\s+(?:Ηθοποιοί|Cast|Starring|Πρωταγωνιστούν|Σενάριο|Writer)|,|\s{2}|$)", text)
+    if not m:
+        return None
+    name = m.group(1).strip()
+    if GREEK.search(name):
+        name = latin_name(name)            # "Ζαν-Πολ Σαλομέ" → "Jean-Paul Salomé"
+        if not name:
+            return None
+    slug = "-".join(re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", name.lower())
+                                              .encode("ascii", "ignore").decode()))
+    if not slug:
+        return None
+    try:
+        import letterboxd_net as net
+        r = net.session().get(f"https://letterboxd.com/director/{slug}/by/release/", timeout=20)
+    except Exception:
+        return None
+    if r.status_code != 200:
+        return None
+    films = list(dict.fromkeys(re.findall(r'data-film-slug="([^"]+)"', r.text)
+                               or re.findall(r'/film/([a-z0-9-]+)/', r.text)))
+    known = [f for f in films if _recent(f, ix["films"], 1)]
+    if known:
+        return max(known, key=lambda f: ix["films"][f][1])
+    return films[0] if films else None          # newest first: what's playing is the latest film
+
+
+# ------------------------------------------------------------ cross-checking
+
+# A listing whose titles are checked against a second site for the same town:
+# cinema-her.com (every Heraklion cinema, Greek titles only) against the
+# Texnopolis chain's own pages (English titles and directors for many films).
+CROSS_CHECK = {"cinema-her.com": "https://www.texnopolis.net/movies/"}
+STRONG = {"title", "title (first part)", "director", "Letterboxd link", "IMDb link"}
+_helpers = {}
+
+
+def clean_title(text):
+    """'Minions & Τέρατα (Μεταγλωττισμένο) 29/10/2026' → 'minions τερατα', for comparing sites."""
+    text = re.sub(r"\(.*?\)|\|.*$", " ", undated(text))
+    return norm(text)
+
+
+def helper_map(url, ix):
+    """{clean title: {"slug", "how", "href"}} from the second site, kept for six hours."""
+    hit = _helpers.get(url)
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    res = films_on(url, cross_check=False)
+    out = {}
+    for f in res["films"]:
+        k = clean_title(f["text"])
+        if k:
+            out[k] = {"slug": f["key"], "how": f["how"], "href": None}
+    for text, href in res["links"].items():
+        k = clean_title(text)
+        if k:
+            out.setdefault(k, {"slug": None, "how": None, "href": None})["href"] = href
+    _helpers[url] = (time.time(), out)
+    return out
+
+
+def _lookup(helper, text):
+    k = clean_title(text)
+    if k in helper:
+        return helper[k]
+    close = difflib.get_close_matches(k, list(helper), n=1, cutoff=0.88)   # Θησαυροί / Θυσαυροί
+    if close:
+        return helper[close[0]]
+    if GREEK.search(text):          # "Δε Ινφλουένσερ Πρότζεκτ" on one site, "The Influencer Project" on the other
+        key = sounds(re.sub(r"\(.*?\)", " ", undated(text)), True)
+        best = max(((difflib.SequenceMatcher(None, key, sounds(h, False)).ratio(), h) for h in helper
+                    if not GREEK.search(h) and len(h) >= 4), default=(0, None))
+        if best[0] >= 0.85:
+            return helper[best[1]]
+    return None
+
+
+def cross_checked(found, order, unmatched, helper_url, ix):
+    """Confirm, correct or fill in the page's matches from the second site."""
+    try:
+        helper = helper_map(helper_url, ix)
+    except Exception:
+        return unmatched
+    site = urllib.parse.urlsplit(helper_url).netloc.replace("www.", "")
+    on_helper = {h["slug"] for h in helper.values() if h["slug"]}
+    for i, key in enumerate(list(order)):
+        f = found[key]
+        h = _lookup(helper, f["text"]) if f["text"] else None
+        old_namesake = key in ix["films"] and not _recent(key, ix["films"], 2)
+        if not old_namesake and (key in on_helper or (h and h["slug"] == key)):
+            f["checked"] = site                        # both sites point to the same film
+            continue
+        if not h:
+            continue
+        better = h["slug"] if h["slug"] and h["how"] in STRONG and h["slug"] != key else None
+        if not better and h["href"] and old_namesake:
+            better = by_director(h["href"], ix)        # an old namesake: ask the film's own page
+        if better and better != key and better not in found:
+            found[better] = dict(f, key=better, how=f"corrected by {site}", checked=site)
+            order[order.index(key)] = better
+            del found[key]
+    still = []
+    for text in unmatched:
+        h = _lookup(helper, text)
+        slug = h["slug"] if h and h["slug"] else (by_director(h["href"], ix) if h and h["href"] else None)
+        if slug and slug not in found:
+            found[slug] = {"key": slug, "how": f"found via {site}", "text": text, "times": [], "checked": site}
+            order.append(slug)
+        elif not slug:
+            still.append(text)
+    return still
 
 
 def resolve_imdb(tt):

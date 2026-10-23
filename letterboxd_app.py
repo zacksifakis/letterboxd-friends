@@ -1032,11 +1032,12 @@ def page_films(url):
             slug, title, year = hit
         else:
             slug = key
-            title, year, _ = films.get(slug, (slug.replace("-", " ").title(), "", 0))
+            m = re.match(r"(.*?)(?:-(\d{4}))?$", slug)       # not in your lists yet: a title from the slug
+            title, year, _ = films.get(slug, (m.group(1).replace("-", " ").title(), m.group(2) or "", 0))
         seats = best.get(slug, (0, ""))
         out.append({"slug": slug, "title": title, "year": year, "seats": seats[0], "seatsIn": seats[1],
                     "text": f["text"] if f["text"] and f["text"] != title else "",
-                    "how": f["how"], "times": f["times"],
+                    "how": f["how"], "times": f["times"], "checked": f.get("checked"),
                     **stats.get(slug, {"rating": None, "ratings": 0, "liked": None})})
     if looked_up:
         with open(IMDB_LB, "w") as fh:
@@ -1044,7 +1045,8 @@ def page_films(url):
     seen = set()
     out = [x for x in out if not (x["slug"] and (x["slug"] in seen or seen.add(x["slug"])))]
     out.sort(key=lambda x: -x["seats"])
-    return {"url": res["url"], "title": res["title"], "films": out, "unmatched": res["unmatched"]}
+    return {"url": res["url"], "title": res["title"], "films": out, "unmatched": res["unmatched"],
+            "checkedWith": res.get("checkedWith")}
 
 
 # ------------------------------------------------- are the scheduled runs ok?

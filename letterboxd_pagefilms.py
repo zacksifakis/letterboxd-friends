@@ -241,11 +241,79 @@ def match_line(line, ix, listing=False):
     return None
 
 
+def athinorama_cards(page):
+    """athinorama.gr's TV and cinema listings: each film's Greek title, original
+    title, year, and channel and time (or venue), straight from its card."""
+    out, seen = [], set()
+    for m in re.finditer(r'<a href="(/(?:tv|cinema)/movie/[^"]+)"[^>]*>([^<]{2,120})</a>', page):
+        href, greek = m.group(1), htmlmod.unescape(m.group(2)).strip()
+        if href in seen:
+            continue
+        seen.add(href)
+        win = page[m.end():m.end() + 1500]
+        nxt = re.search(r'<a href="/(?:tv|cinema)/movie/', win)
+        win = win[:nxt.start()] if nxt else win            # stop at the next film's card
+        orig = re.search(r'original-title[^>]*>\s*<span>(.*?)</span>', win, re.S)
+        when = re.search(r'<span class="channel">(.*?)</span>\s*<span class="time">(.*?)</span>', win, re.S)
+        details = re.sub(r"<p\b.*?</p>", " ", win, flags=re.S)          # not the plot ("…του έτους 2035")
+        year = re.search(r"\b(19[1-9]\d|20[0-3]\d)\b", re.sub(r"<[^>]+>", " ", details))
+        if year and int(year.group(1)) > time.localtime().tm_year + 1:
+            year = None
+        out.append({"href": href, "greek": greek, "original": htmlmod.unescape(orig.group(1)).strip() if orig else "",
+                    "year": year.group(1) if year else None,
+                    "when": " ".join(htmlmod.unescape(x).strip() for x in when.groups()) if when else ""})
+    return out
+
+
+def match_card(c, ix):
+    """(slug, how) for one athinorama card: titles and year together, else Letterboxd's search."""
+    films, by = ix["films"], ix["by_title"]
+    greek_hits = set(by.get(norm(c["greek"]), [])) if c["greek"] else set()
+    orig_hits = set(by.get(norm(c["original"]), [])) if c["original"] and c["original"] != c["greek"] else set()
+    both = greek_hits & orig_hits
+    for pool, how in ((both, "both titles"), (orig_hits, "original title"), (greek_hits, "greek title")):
+        known = [x for x in pool if x in films]
+        if c["year"]:
+            known = [x for x in known if films[x][1] and abs(int(films[x][1]) - int(c["year"])) <= 1]
+        if known:                               # several: the most watched (TV shows old films too)
+            return max(known, key=lambda x: films[x][2]), how
+    if not c["year"] and c.get("href"):          # the film's own page has the year
+        try:
+            _, page = fetch("https://www.athinorama.gr" + c["href"])
+            y = re.search(r'class="year">\s*(\d{4})', page)
+            c["year"] = y.group(1) if y else None
+        except Exception:
+            pass
+    for q in filter(None, (c["original"], c["greek"])):
+        hit = letterboxd_search(q, c["year"], any_year=not c["year"])
+        if hit:
+            SEARCHED[hit[0]] = hit
+            return hit[0], "Letterboxd search"
+    return None
+
+
 def films_on(url, limit=150, cross_check=True):
     """{"url", "title", "films": [...], "unmatched": [...]} for a web page."""
     url, page = fetch(url)
     ix = index()
     found, order = {}, []
+    title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
+    title = htmlmod.unescape(title.group(1).strip()) if title else url
+
+    if "athinorama.gr" in urllib.parse.urlsplit(url).netloc:
+        cards = athinorama_cards(page)
+        if cards:
+            films, unmatched = [], []
+            for c in cards:
+                hit = match_card(c, ix)
+                if hit and hit[0] not in found:
+                    found[hit[0]] = {"key": hit[0], "how": hit[1], "times": [c["when"]] if c["when"] else [],
+                                     "text": c["greek"] + (f" ({c['original']})" if c["original"] and c["original"] != c["greek"] else "")}
+                    films.append(found[hit[0]])
+                elif not hit:
+                    unmatched.append(c["greek"])
+            return {"url": url, "title": title, "films": films, "links": {}, "unmatched": unmatched,
+                    "checkedWith": None}
 
     def add(key, how, text, times=None):
         if key not in found:
@@ -366,16 +434,17 @@ _searches = {}
 SEARCHED = {}          # slug -> (slug, title, year) for films found by search, for display
 
 
-def letterboxd_search(title, year=None):
+def letterboxd_search(title, year=None, any_year=False):
     """
     A film by title through Letterboxd's own search box: (slug, title, year) for
     a result whose title or original title is this one — from the given year if
     known, else the newest (a cinema shows current films). None if unsure.
     """
-    q = re.sub(r"\(.*?\)", " ", undated(title)).strip()
+    q = re.sub(r"\(.*?\)", " ", undated(title))
+    q = re.sub(r"\s+", " ", re.sub(r"[.…,;!?]+", " ", q)).strip()      # "Μια Τρελή... Τρελή..." spoils the search
     if len(q) < 3:
         return None
-    key = (norm(q), year)
+    key = (norm(q), year, any_year)
     if key in _searches:
         return _searches[key]
     hit = None
@@ -384,9 +453,12 @@ def letterboxd_search(title, year=None):
         r = net.session().get("https://letterboxd.com/s/autocompletefilm",
                               params={"q": q, "limit": 10}, timeout=20)
         results = r.json().get("data", []) if r.status_code == 200 else []
-        same = [d for d in results if norm(q) in (norm(d.get("name") or ""), norm(d.get("originalName") or ""))]
+        loose = lambda t: re.sub(r"(.)\1+", r"\1", norm(t))         # old spellings: Τρελλή = Τρελή
+        same = [d for d in results if loose(q) in (loose(d.get("name") or ""), loose(d.get("originalName") or ""))]
         if year:
             same = [d for d in same if d.get("releaseYear") and abs(int(d["releaseYear"]) - int(year)) <= 1]
+        elif any_year:
+            same = same[:1]                     # Letterboxd's own best match
         else:
             this_year = time.localtime().tm_year
             same = [d for d in same if d.get("releaseYear") and int(d["releaseYear"]) >= this_year - 1]

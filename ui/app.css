@@ -168,3 +168,5 @@
   .pos b{color:var(--green)}
   .pos.none{color:var(--dim);opacity:.7}
   @media(max-width:720px){.cols{grid-template-columns:1fr}}
+  .hitstats .n{font-size:10.5px;color:var(--dim);margin-left:2px;font-weight:400}
+  .hitstats.few{opacity:.5}

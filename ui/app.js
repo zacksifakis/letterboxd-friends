@@ -608,8 +608,11 @@ async function doSearch(){
 // came from has them.
 function hitStats(h){
   if (h.rating == null && h.liked == null) return "";
-  return `<span class="hitstats" title="${h.ratings} of the ${h.seats} friends who watched it rated it">`
-    + (h.rating != null ? `<b>${h.rating.toFixed(1)}\u2605</b>` : "")
+  // Like the main list: under 10 ratings the average says little, so it's greyed out.
+  const few = (h.ratings || 0) < 10;
+  return `<span class="hitstats${few ? " few" : ""}" title="${h.ratings} of the ${h.seats} friends who watched it rated it`
+    + `${h.liked != null ? `; ${h.liked}% of the ${h.seats} pressed like` : ""}${few ? " — too few ratings to say much" : ""}">`
+    + (h.rating != null ? `<b>${h.rating.toFixed(1)}\u2605</b><span class="n">${h.ratings}</span>` : "")
     + (h.liked != null ? ` <span class="heart">${h.liked}%\u2665</span>` : "") + `</span>`;
 }
 

@@ -245,6 +245,11 @@ def athinorama_cards(page):
     """athinorama.gr's TV and cinema listings: each film's Greek title, original
     title, year, and channel and time (or venue), straight from its card."""
     out, seen = [], set()
+    # The page opens with a banner of featured films; the schedule proper comes
+    # after the day's date heading (the "guide list"). Only that is read.
+    guide = re.search(r'<div class="(?:sticky-breaker-title|guide-list)', page)
+    if guide:
+        page = page[guide.start():]
     for m in re.finditer(r'<a href="(/(?:tv|cinema)/movie/[^"]+)"[^>]*>([^<]{2,120})</a>', page):
         href, greek = m.group(1), htmlmod.unescape(m.group(2)).strip()
         if href in seen:

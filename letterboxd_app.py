@@ -1032,8 +1032,10 @@ def page_films(url):
             slug, title, year = hit
         else:
             slug = key
-            m = re.match(r"(.*?)(?:-(\d{4}))?$", slug)       # not in your lists yet: a title from the slug
-            title, year, _ = films.get(slug, (m.group(1).replace("-", " ").title(), m.group(2) or "", 0))
+            m = re.match(r"(.*?)(?:-(\d{4}))?$", slug)       # not in your lists yet: from the search, or the slug
+            guess = pf.SEARCHED.get(slug)
+            title, year, _ = films.get(slug, (guess[1], guess[2], 0) if guess else
+                                       (m.group(1).replace("-", " ").title(), m.group(2) or "", 0))
         seats = best.get(slug, (0, ""))
         out.append({"slug": slug, "title": title, "year": year, "seats": seats[0], "seatsIn": seats[1],
                     "text": f["text"] if f["text"] and f["text"] != title else "",

@@ -172,12 +172,18 @@ def _pick(cands, films, hint_year=None):
 
 
 LABELS = re.compile(r"^(εισιτηρια|ωρεσ προβολων|προβολεσ|πρεμιερα|προσεχωσ|τρειλερ|trailer|tickets?|showtimes|"
-                    r"book now|buy tickets|αγοραστε.*|περισσοτερα|δειτε περισσοτερα|more info|απορρητο)$")
+                    r"book now|buy tickets|αγοραστε.*|περισσοτερα|δειτε περισσοτερα|more info|απορρητο|"
+                    r"coming soon|now showing|now playing|today|tonight|this week|movies|cinemas|kids.? movies|"
+                    r"open.air cinemas|παιζονται τωρα|σημερα|ταινιεσ|κινηματογραφοι|παιδικεσ ταινιεσ)$")
+
+
+COUNT = re.compile(r"\s*[·|-]?\s*\d+\s+(?:cinemas?|theaters?|theatres?|screens?|venues?|showtimes?|movies?|films?|"
+                   r"αίθουσες|αίθουσα|σινεμά|κινηματογράφοι|κινηματογράφους|προβολές|ταινίες)\s*$", re.I)
 
 
 def is_label(line):
     """Buttons, headings and footers that happen to share a film's title."""
-    l = norm(line)
+    l = norm(COUNT.sub("", line))
     return bool(LABELS.match(l)) or bool(re.search(r"©|cookie", line, re.I)) or \
         bool(re.search(r"αιθουσα\s*(\d|[α-ω]\b)", l))
 
@@ -198,6 +204,7 @@ def match_line(line, ix, listing=False):
         return None
     year = re.search(r"\((\d{4})\)|\b(19\d\d|20\d\d)\b", line)
     hint = (year.group(1) or year.group(2)) if year else None
+    line = COUNT.sub("", line).strip()             # "Clayface 52 cinemas" → "Clayface"
     bare = re.sub(r"\(.*?\)|\[.*?\]|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b(19|20)\d\d\b", " ", line).strip(" -–:·|")
     for text in (line, bare):
         key = norm(text)
@@ -265,7 +272,7 @@ def films_on(url, limit=150, cross_check=True):
             continue                            # "coming soon": not playing yet, so left out
         hit = match_line(line, ix, listing)
         if hit:
-            add(hit[0], hit[1], line, after)
+            add(hit[0], hit[1], COUNT.sub("", line).strip(), after)
         elif listing and not TIME.search(line) and not re.search(r"\d{3,4}\b", line) and 3 <= len(line) <= 60 \
                 and len(line.split()) <= 7 and not line.endswith(".") and not line.startswith("(") \
                 and not re.search(r"www\.|https?:|cinema|\bpage\b", line, re.I) and not is_label(line) \
@@ -284,23 +291,64 @@ def films_on(url, limit=150, cross_check=True):
         if text and urllib.parse.urlsplit(href).netloc == site and \
                 re.search(r"/(movies?|films?|tainies|tainia|ταινίες)/[^/]+", href, re.I):
             links.setdefault(text, href)
+    # A title that matched an old film of the same name ("The Suitcase", 2008)
+    # is checked against the film's own page: a different year means it's
+    # another film, found through its director.
+    by_name = {undated(COUNT.sub("", t)): h for t, h in links.items()}
+    for key in list(order):
+        f = found[key]
+        href = by_name.get(f["text"])
+        if not href or key not in ix["films"] or _recent(key, ix["films"], 2):
+            continue
+        _, year = film_page(href)
+        if year and abs(int(year) - int(ix["films"][key][1] or 0)) > 1:
+            found_it = letterboxd_search(f["text"], year)
+            better = found_it[0] if found_it else by_director(href, ix)
+            if found_it:
+                SEARCHED[better] = found_it
+            if better and better not in found:
+                found[better] = dict(f, key=better, how=f"newer film ({year})")
+                order[order.index(key)] = better
+                del found[key]
+
+    # The film page's own address often is the film's name: /movies/clayface.
+    for text, href in list(links.items()):
+        name = undated(COUNT.sub("", text))
+        if name in {undated(found[k]["text"]) for k in order} or upcoming(text) or is_label(name):
+            continue
+        slug = by_address(href, ix)
+        if slug:
+            add(slug, "page address", name)
+    unmatched = [u for u in unmatched if undated(COUNT.sub("", u)) not in {undated(found[k]["text"]) for k in order}]
     placed = {undated(found[k]["text"]) for k in order}
     tried, done = 0, set()
     for text, href in links.items():
-        name = undated(text)
+        name = undated(COUNT.sub("", text))
         if name in placed or name in done or tried >= 20 or not 2 <= len(name) <= 80 or upcoming(text) \
                 or is_label(name) or set(norm(name).split()) <= site_words or match_line(name, ix, True):
             continue
         tried += 1
         done.add(name)
-        hit = by_director(href, ix)
-        time.sleep(1)
+        _, year = film_page(href)
+        found_it = letterboxd_search(name, year)
+        hit = found_it[0] if found_it else by_director(href, ix)
         if hit:
-            add(hit, "director", name)
+            add(hit, "Letterboxd search" if found_it else "director", name)
             placed.add(name)
+            if found_it:
+                SEARCHED[hit] = found_it
         else:
             unmatched.append(name)
     unmatched = [u for u in dict.fromkeys(undated(u) for u in unmatched) if u not in placed]
+    still = []
+    for u in unmatched[:25]:
+        found_it = letterboxd_search(u)
+        if found_it and found_it[0] not in found:
+            add(found_it[0], "Letterboxd search", u)
+            SEARCHED[found_it[0]] = found_it
+        else:
+            still.append(u)
+    unmatched = still + unmatched[25:]
 
     if cross_check:
         helper = CROSS_CHECK.get(site.replace("www.", ""))
@@ -312,6 +360,59 @@ def films_on(url, limit=150, cross_check=True):
             "films": [found[k] for k in order], "links": {undated(t): h for t, h in links.items()},
             "unmatched": list(dict.fromkeys(unmatched))[:30],
             "checkedWith": CROSS_CHECK.get(site.replace("www.", "")) if cross_check else None}
+
+
+_searches = {}
+SEARCHED = {}          # slug -> (slug, title, year) for films found by search, for display
+
+
+def letterboxd_search(title, year=None):
+    """
+    A film by title through Letterboxd's own search box: (slug, title, year) for
+    a result whose title or original title is this one — from the given year if
+    known, else the newest (a cinema shows current films). None if unsure.
+    """
+    q = re.sub(r"\(.*?\)", " ", undated(title)).strip()
+    if len(q) < 3:
+        return None
+    key = (norm(q), year)
+    if key in _searches:
+        return _searches[key]
+    hit = None
+    try:
+        import letterboxd_net as net
+        r = net.session().get("https://letterboxd.com/s/autocompletefilm",
+                              params={"q": q, "limit": 10}, timeout=20)
+        results = r.json().get("data", []) if r.status_code == 200 else []
+        same = [d for d in results if norm(q) in (norm(d.get("name") or ""), norm(d.get("originalName") or ""))]
+        if year:
+            same = [d for d in same if d.get("releaseYear") and abs(int(d["releaseYear"]) - int(year)) <= 1]
+        else:
+            this_year = time.localtime().tm_year
+            same = [d for d in same if d.get("releaseYear") and int(d["releaseYear"]) >= this_year - 1]
+        if same:
+            d = max(same, key=lambda d: d.get("releaseYear") or 0)
+            m = re.search(r"/film/([a-z0-9-]+)/", d.get("url") or "")
+            if m:
+                hit = (m.group(1), d.get("name"), str(d.get("releaseYear") or ""))
+    except Exception:
+        hit = None
+    _searches[key] = hit
+    time.sleep(0.7)
+    return hit
+
+
+def by_address(href, ix):
+    """A Letterboxd film named by the last part of a film page's address, if it's a recent film."""
+    last = urllib.parse.urlsplit(href).path.rstrip("/").rsplit("/", 1)[-1].lower()
+    last = re.sub(r"[^a-z0-9-]", "", re.sub(r"^\d+-", "", last))
+    if len(last) < 3:
+        return None
+    year = time.localtime().tm_year
+    for cand in (last, f"{last}-{year}", f"{last}-{year - 1}"):
+        if cand in ix["films"] and _recent(cand, ix["films"], 2):
+            return cand
+    return None
 
 
 DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
@@ -350,24 +451,55 @@ def latin_name(greek_name):
     return None
 
 
-def by_director(film_url, ix):
-    """
-    The film a cinema's film page is about, from the director it names: the
-    most recent of that director's films on Letterboxd. Only Latin-script
-    names (a Greek spelling of a foreign name can't be turned into a URL).
-    """
+_pages = {}
+
+
+def film_page(film_url):
+    """(director, year) a cinema's page for one film gives — from its schema.org
+    Movie data when it has it, else from a "Director:" line. Cached per page."""
+    if film_url in _pages:
+        return _pages[film_url]
+    out = (None, None)
     try:
-        if not allowed(film_url):
-            return None
-        _, page = fetch(film_url)
+        if allowed(film_url):
+            _, page = fetch(film_url)
+            out = _director_and_year(page)
     except Exception:
-        return None
+        pass
+    _pages[film_url] = out
+    return out
+
+
+def _director_and_year(page):
+    import json
+    for block in re.findall(r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', page, re.S | re.I):
+        try:
+            data = json.loads(block)
+        except Exception:
+            continue
+        for g in (data.get("@graph") or [data]) if isinstance(data, dict) else data:
+            if isinstance(g, dict) and g.get("@type") == "Movie":
+                d = g.get("director")
+                d = d[0] if isinstance(d, list) and d else d
+                name = d.get("name") if isinstance(d, dict) else (d if isinstance(d, str) else None)
+                date = str(g.get("datePublished") or g.get("dateCreated") or g.get("copyrightYear") or "")
+                if name:
+                    return name, (date[:4] if re.match(r"\d{4}", date) else None)
     text = " ".join(page_lines(page))
     m = re.search(r"(?:Σκηνοθεσία|Directed by|Director|Regie|Réalisation)\s*:?\s*([A-Za-zÀ-ÿͰ-Ͽἀ-῿.'’ -]{4,60}?)"
                   r"(?=\s+(?:Ηθοποιοί|Cast|Starring|Πρωταγωνιστούν|Σενάριο|Writer)|,|\s{2}|$)", text)
-    if not m:
+    return (m.group(1).strip(), None) if m else (None, None)
+
+
+def by_director(film_url, ix):
+    """
+    The film a cinema's film page is about, from the director (and year) it
+    gives: that director's film from that year on Letterboxd, else their newest.
+    A Greek spelling of a foreign name is turned into English via Wikidata.
+    """
+    name, year = film_page(film_url)
+    if not name:
         return None
-    name = m.group(1).strip()
     if GREEK.search(name):
         name = latin_name(name)            # "Ζαν-Πολ Σαλομέ" → "Jean-Paul Salomé"
         if not name:
@@ -385,6 +517,11 @@ def by_director(film_url, ix):
         return None
     films = list(dict.fromkeys(re.findall(r'data-film-slug="([^"]+)"', r.text)
                                or re.findall(r'/film/([a-z0-9-]+)/', r.text)))
+    if year:                                    # the director's film from that year
+        dated = [f for f in films if ix["films"].get(f, ("", ""))[1] in (year, str(int(year) - 1))
+                 or f.endswith("-" + year)]
+        if dated:
+            return dated[0]
     known = [f for f in films if _recent(f, ix["films"], 1)]
     if known:
         return max(known, key=lambda f: ix["films"][f][1])

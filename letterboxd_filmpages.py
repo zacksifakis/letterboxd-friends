@@ -85,8 +85,14 @@ def fetch(max_n=None, delay=1.0, log=print):
         log("film pages: another fetch is already running — skipping")
         return 0
     cache, now = load(), time.time()
+    try:
+        import letterboxd_greek_titles as gt
+        recent, every = gt.recent_slugs(), gt.RECENT_RECHECK_DAYS
+    except Exception:
+        recent, every = set(), RECHECK_DAYS
+    # this year's and last year's films weekly (Greek titles and genres arrive late), the rest every 60 days
     todo = [s for s in targets()
-            if s not in cache or now - cache[s].get("at", 0) > RECHECK_DAYS * 86400]
+            if s not in cache or now - cache[s].get("at", 0) > (every if s in recent else RECHECK_DAYS) * 86400]
     if max_n:
         todo = todo[:max_n]
     log(f"film pages: {len(todo)} to fetch")

@@ -42,10 +42,24 @@ ATH = os.path.join(CACHE_DIR, "athinorama.json")              # sitemap + matche
 UA = "168SeatsPersonalProject/1.0 (personal film list; low request volume)"
 AKAS_URL = "https://datasets.imdbws.com/title.akas.tsv.gz"
 ATH_SITEMAP = "https://www.athinorama.gr/sitemap/movies"
-IMDB_MAX_DAYS = 30
+IMDB_MAX_DAYS = 14
 SITEMAP_MAX_DAYS = 7
 
 GREEK = re.compile("[Ͱ-Ͽἀ-῿]")
+
+# New films get their Greek title, cast and genres filled in over the months
+# around their release, so this year's and last year's films are looked at
+# again weekly; older films are settled.
+RECENT_RECHECK_DAYS = 7
+PAGE_RECHECK_DAYS = 14
+
+
+def is_recent(year):
+    return str(year).isdigit() and int(year) >= time.localtime().tm_year - 1
+
+
+def recent_slugs():
+    return {s for s, (_, y, _) in films().items() if is_recent(y)}
 
 
 def log(msg):
@@ -238,22 +252,23 @@ def fetch_athinorama(max_n=300, delay=1.0):
     all_films = films()
     cand = athinorama_candidates(state, all_films, greek_hints())
     order = sorted(cand, key=lambda s: -all_films[s][2])
-    todo = []
+    todo, now = [], time.time()
+    stale = lambda aid: len(pages[aid]) < 4 or now - pages[aid][3] > PAGE_RECHECK_DAYS * 86400
     for s in order:
-        y = all_films[s][1]
+        recent = is_recent(all_films[s][1])
         for aid in cand[s]:
-            if aid not in pages and aid not in todo:
+            if aid not in todo and (aid not in pages or (recent and stale(aid))):
                 todo.append(aid)
     log(f"athinorama: {len(cand):,} films have candidate pages, {len(todo):,} pages not yet read")
     got = 0
     for i, aid in enumerate(todo[:max_n], 1):
         url = f"https://www.athinorama.gr/cinema/movie/{state['urls'][aid]}-{aid}/"
         try:
-            pages[aid] = list(parse_athinorama(_get(url, timeout=30).decode("utf-8", "replace")))
+            pages[aid] = list(parse_athinorama(_get(url, timeout=30).decode("utf-8", "replace"))) + [time.time()]
             got += 1
         except Exception as e:
             if "404" in str(e):
-                pages[aid] = ["", "", ""]
+                pages[aid] = ["", "", "", time.time()]
         if i % 50 == 0:
             _save(ATH, state)
         time.sleep(delay)
@@ -274,7 +289,7 @@ def athinorama_matches(state=None, all_films=None):
             continue
         best = None
         for aid in ids:
-            t, y, _ = pages.get(aid) or ("", "", "")
+            t, y = (pages.get(aid) or ["", ""])[:2]
             if t and y.isdigit() and abs(int(y) - int(year)) <= 1:
                 exact = int(y) == int(year)
                 if best is None or (exact and not best[1]):
@@ -333,19 +348,21 @@ def fetch_filmy(max_n=300, delay=1.0):
     pages = state.setdefault("pages", {})
     all_films = films()
     cand = filmy_candidates(state, all_films)
-    todo = []
+    todo, now = [], time.time()
     for s in sorted(cand, key=lambda s: -all_films[s][2]):
-        todo += [k for k in cand[s] if k not in pages and k not in todo]
+        recent = is_recent(all_films[s][1])
+        todo += [k for k in cand[s] if k not in todo and (k not in pages or recent and (
+            len(pages[k]) < 3 or now - pages[k][2] > PAGE_RECHECK_DAYS * 86400))]
     log(f"filmy.gr: {len(cand):,} films have candidate pages, {len(todo):,} pages not yet read")
     got = 0
     for i, k in enumerate(todo[:max_n], 1):
         try:
             pages[k] = list(parse_filmy(_get(f"https://www.filmy.gr/movies-database/{k}/", timeout=30)
-                                        .decode("utf-8", "replace")))
+                                        .decode("utf-8", "replace"))) + [time.time()]
             got += 1
         except Exception as e:
             if "404" in str(e):
-                pages[k] = ["", ""]
+                pages[k] = ["", "", time.time()]
         if i % 50 == 0:
             _save(FILMY, state)
         time.sleep(delay)
@@ -362,7 +379,7 @@ def filmy_matches(all_films=None):
     for slug, keys in filmy_candidates(state, all_films).items():
         year = all_films[slug][1]
         for k in keys:
-            t, y = pages.get(k) or ("", "")
+            t, y = (pages.get(k) or ["", ""])[:2]
             if t and year.isdigit() and y.isdigit() and abs(int(y) - int(year)) <= 1:
                 out[slug] = t
                 break

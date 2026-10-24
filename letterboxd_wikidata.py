@@ -86,10 +86,23 @@ def scraped_lists():
 
 # ------------------------------------------------------------ phase 1: titles
 
+def _recent():
+    try:
+        import letterboxd_greek_titles as gt
+        return gt.recent_slugs(), gt.RECENT_RECHECK_DAYS * 86400
+    except Exception:
+        return set(), 7 * 86400
+
+
 def fetch_titles(slugs, cache):
-    """Letterboxd slug -> Wikidata item + Greek label, for every film."""
-    todo = [s for s in slugs if s not in cache["films"]]
-    log(f"Greek titles: {len(slugs):,} films, {len(todo):,} not yet looked up")
+    """Letterboxd slug -> Wikidata item + Greek label, for every film. New films
+    are often added to Wikidata, or given a Greek label, months after release,
+    so this year's and last year's are looked up again weekly."""
+    recent, every = _recent()
+    checked, now = cache.setdefault("checked", {}), time.time()
+    todo = [s for s in slugs if s not in cache["films"]
+            or (s in recent and now - checked.get(s, 0) > every)]
+    log(f"Greek titles: {len(slugs):,} films, {len(todo):,} to look up (new, or recent and due)")
     size = 250
     for n, i in enumerate(range(0, len(todo), size), 1):
         batch = [s for s in todo[i:i + size] if re.fullmatch(r"[a-z0-9-]+", s)]
@@ -98,14 +111,17 @@ def fetch_titles(slugs, cache):
                  '?item wdt:P6127 ?slug . '
                  'OPTIONAL { ?item rdfs:label ?el FILTER(LANG(?el) = "el") } }') % values
         data = fetch_json(SPARQL, urllib.parse.urlencode({"query": query}).encode())
+        seen = set()
         for b in data["results"]["bindings"]:
             slug = b["slug"]["value"]
-            if cache["films"].get(slug):
-                continue
+            if slug in seen and not b.get("el"):
+                continue                                # one row per film; keep the one with a label
+            seen.add(slug)
             cache["films"][slug] = {"q": b["item"]["value"].rsplit("/", 1)[-1],
                                     "el": b.get("el", {}).get("value", "")}
         for s in todo[i:i + size]:
-            cache["films"].setdefault(s, None)          # None = not on Wikidata
+            cache["films"].setdefault(s, None)          # None = not on Wikidata (yet)
+            checked[s] = now
         if n % 10 == 0 or i + size >= len(todo):
             save_cache(cache)
             done = min(i + size, len(todo))
@@ -159,8 +175,13 @@ def minutes(statements):
 
 
 def fetch_details(slugs, cache):
-    want = [s for s in slugs if cache["films"].get(s) and s not in cache["detail"]]
-    log(f"Details: {len(slugs):,} films selected, {len(want):,} not yet fetched")
+    """Cast, director, genres, running time — again weekly for recent films,
+    whose entries keep filling in after release."""
+    recent, every = _recent()
+    stamp, now = cache.setdefault("detail_at", {}), time.time()
+    want = [s for s in slugs if cache["films"].get(s) and (s not in cache["detail"]
+            or (s in recent and now - stamp.get(s, 0) > every))]
+    log(f"Details: {len(slugs):,} films selected, {len(want):,} to fetch (new, or recent and due)")
     by_q = {cache["films"][s]["q"]: s for s in want}
     qids = list(by_q)
     for n, i in enumerate(range(0, len(qids), 50), 1):
@@ -190,6 +211,7 @@ def fetch_details(slugs, cache):
             }
         for q in batch:
             cache["detail"].setdefault(by_q[q], {})
+            stamp[by_q[q]] = now
         if n % 10 == 0 or i + 50 >= len(qids):
             save_cache(cache)
             log(f"  {min(i + 50, len(qids)):,}/{len(qids):,} films")
@@ -201,8 +223,11 @@ def fetch_labels(cache):
     for d in cache["detail"].values():
         for key in ("cast", "dir", "genre"):
             need.update(d.get(key, []))
-    todo = sorted(q for q in need if q not in cache["labels"])
-    log(f"Names: {len(need):,} people and genres, {len(todo):,} not yet fetched")
+    # names still missing a Greek spelling are asked for again monthly
+    asked, now = cache.setdefault("labels_at", {}), time.time()
+    todo = sorted(q for q in need if q not in cache["labels"]
+                  or (not cache["labels"][q].get("el") and now - asked.get(q, 0) > 30 * 86400))
+    log(f"Names: {len(need):,} people and genres, {len(todo):,} to fetch")
     for n, i in enumerate(range(0, len(todo), 50), 1):
         batch = todo[i:i + 50]
         url = API + "?" + urllib.parse.urlencode({
@@ -215,6 +240,7 @@ def fetch_labels(cache):
                                     "en": labels.get("en", {}).get("value", "")}
         for q in batch:
             cache["labels"].setdefault(q, {"el": "", "en": ""})
+            asked[q] = now
         if n % 20 == 0 or i + 50 >= len(todo):
             save_cache(cache)
             log(f"  {min(i + 50, len(todo)):,}/{len(todo):,} names")

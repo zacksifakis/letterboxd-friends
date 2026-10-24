@@ -228,6 +228,18 @@ def main():
     except Exception as e:
         refresh.log(f"--- Greek titles: ERROR {e}")
 
+    # Wikidata (Greek titles, cast, director, genres) once a day: new films,
+    # plus this year's and last year's again weekly as their entries fill in.
+    try:
+        import letterboxd_wikidata as wd
+        stamp = os.path.join(HOME, ".letterboxd_cache", "wikidata_daily.stamp")
+        if not os.path.exists(stamp) or time.time() - os.path.getmtime(stamp) > 20 * 3600:
+            wd.log = lambda m: refresh.log("--- wikidata: " + m.split("] ", 1)[-1])
+            wd.main()
+            open(stamp, "w").close()
+    except Exception as e:
+        refresh.log(f"--- wikidata: ERROR {e}")
+
     # Greek summaries (TMDB) for films new to the pages — only once a key is saved.
     try:
         import letterboxd_tmdb

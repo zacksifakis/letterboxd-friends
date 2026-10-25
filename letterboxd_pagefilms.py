@@ -174,9 +174,14 @@ def _pick(cands, films, hint_year=None):
 LABELS = re.compile(r"^(εισιτηρια|ωρεσ προβολων|προβολεσ|πρεμιερα|προσεχωσ|τρειλερ|trailer|tickets?|showtimes|"
                     r"book now|buy tickets|αγοραστε.*|περισσοτερα|δειτε περισσοτερα|more info|απορρητο|"
                     r"coming soon|now showing|now playing|today|tonight|this week|movies|cinemas|kids.? movies|"
-                    r"open.air cinemas|παιζονται τωρα|σημερα|ταινιεσ|κινηματογραφοι|παιδικεσ ταινιεσ)$")
+                    r"open.air cinemas|παιζονται τωρα|σημερα|ταινιεσ|κινηματογραφοι|παιδικεσ ταινιεσ|"
+                    r"home|contact|contact us|about|about us|menu|search|login|log in|events|calendar|news|"
+                    r"map|donate|support|visit|schedule|archive|press|faq|tickets and passes)$")
 
 
+INLINE = re.compile(r"([^()]{2,120}?)\s*\([^()]{2,60}?,\s*((?:18|19|20)\d\d)\s*,\s*\d{1,3}\s*min\.?\)")
+DETAILS = re.compile(r"^\(?[^()]{0,60}\b(18|19|20)\d\d\b[^()]{0,60}\b(\d{2,3}\s*min|35mm|16mm|DCP|digital)"
+                     r"|\|\s*(18|19|20)\d\d\s*\||^(18|19|20)\d\d\s*[|,·]", re.I)
 COUNT = re.compile(r"\s*[·|-]?\s*\d+\s+(?:cinemas?|theaters?|theatres?|screens?|venues?|showtimes?|movies?|films?|"
                    r"αίθουσες|αίθουσα|σινεμά|κινηματογράφοι|κινηματογράφους|προβολές|ταινίες)\s*$", re.I)
 
@@ -193,17 +198,19 @@ def _recent(slug, films, years=2):
     return y.isdigit() and int(y) >= time.localtime().tm_year - years
 
 
-def match_line(line, ix, listing=False):
+def match_line(line, ix, listing=False, year=None):
     """
     (slug or 'imdb:tt…', how) for a line that is a film's title, else None.
-    `listing` says the line is followed by showtimes, as in a programme: then
-    one-word and sound-alike matches are trusted; elsewhere a one-word line
-    ("Thursday", "Other") only counts for a recent film.
+    `listing` says the line is followed by showtimes or a details line, as in a
+    programme: then one-word and sound-alike matches are trusted; elsewhere a
+    one-word line ("Home", "Contact") isn't taken for a film. `year` is the
+    year printed in that details line ("Canada | 1992 | 35mm"): the film must
+    be from that year.
     """
     if not 2 <= len(line) <= 90 or len(line.split()) > 14 or line.startswith("(") or is_label(line):
         return None
-    year = re.search(r"\((\d{4})\)|\b(19\d\d|20\d\d)\b", line)
-    hint = (year.group(1) or year.group(2)) if year else None
+    m = re.search(r"\((\d{4})\)|\b(19\d\d|20\d\d)\b", line)
+    hint = year or ((m.group(1) or m.group(2)) if m else None)
     line = COUNT.sub("", line).strip()             # "Clayface 52 cinemas" → "Clayface"
     bare = re.sub(r"\(.*?\)|\[.*?\]|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b(19|20)\d\d\b", " ", line).strip(" -–:·|")
     for text in (line, bare):
@@ -211,7 +218,10 @@ def match_line(line, ix, listing=False):
         hit = ix["by_title"].get(key) if key else None
         if hit:
             slug = _pick(hit, ix["films"], hint)
-            if len(key.split()) == 1 and not listing and not (hint or _recent(slug, ix["films"])):
+            if hint and slug in ix["films"] and ix["films"][slug][1].isdigit() \
+                    and abs(int(ix["films"][slug][1]) - int(hint)) > 1:
+                return None                     # the page says another year: some other film of that name
+            if len(key.split()) == 1 and not listing and not hint:
                 return None
             if len(key.split()) == 1 and slug.startswith("imdb:"):
                 return None
@@ -339,11 +349,21 @@ def films_on(url, limit=150, cross_check=True):
     for i, line in enumerate(lines):
         # notes in brackets ("(Ντοκιμαντέρ)", "(μτγλτ)") can sit between a title and its times
         nxt = [l for l in lines[i + 1:i + 6] if not (l.startswith("(") and l.endswith(")"))]
-        after = [l for l in nxt[:3] if TIME.search(l) and "©" not in l and not match_line(l, ix)][:3]
-        listing = bool(after) and bool(nxt) and nxt[0] in after
+        # A details line right under a title — "Canada | 1992 | 35mm | 100 min.",
+        # "(Švankmajer, 1992, 17 min.)" — gives the film's year.
+        details = next((l for l in lines[i + 1:i + 3] if DETAILS.search(l)), None)
+        year = re.search(r"\b(18\d\d|19\d\d|20\d\d)\b", details).group(1) if details else None
+        after = [l for l in nxt[:3] if TIME.search(l) and "©" not in l and l != details
+                 and not match_line(l, ix)][:3]
+        listing = (bool(after) and bool(nxt) and nxt[0] in after) or bool(year)
         if any(upcoming(l) for l in [line] + after):
             continue                            # "coming soon": not playing yet, so left out
-        hit = match_line(line, ix, listing)
+        hit = match_line(line, ix, listing, year)
+        if not hit and year and 2 <= len(line) <= 80 and not is_label(line) and not re.search(r"\d{3,}", line):
+            found_it = letterboxd_search(line, year)          # not in your lists: ask Letterboxd, with the year
+            if found_it:
+                SEARCHED[found_it[0]] = found_it
+                hit = (found_it[0], "Letterboxd search")
         if hit:
             add(hit[0], hit[1], COUNT.sub("", line).strip(), after)
         elif listing and not TIME.search(line) and not re.search(r"\d{3,4}\b", line) and 3 <= len(line) <= 60 \
@@ -351,6 +371,22 @@ def films_on(url, limit=150, cross_check=True):
                 and not re.search(r"www\.|https?:|cinema|\bpage\b", line, re.I) and not is_label(line) \
                 and not set(norm(line).split()) <= site_words:
             unmatched.append(line)              # looks like a programme entry we couldn't place
+        # Films named inside a paragraph: "…includes Food (Švankmajer, 1992, 17 min.), and
+        # A Walk Through H (Greenaway, 1978, 41 min.)" — the title is what comes before
+        # the brackets, back to the previous comma, "and" or "includes".
+        for m in INLINE.finditer(line):
+            name = re.split(r"[,;:.]\s+|(?:^|\s)and\s+|\bincludes?\s+|\bfeaturing\s+|\bwith\s+",
+                            m.group(1).strip(" ,"))[-1].strip(" ,")
+            if not 2 <= len(name) <= 70 or name in {found[k]["text"] for k in order}:
+                continue
+            hit = match_line(name, ix, True, m.group(2))
+            if not hit:
+                found_it = letterboxd_search(name, m.group(2))
+                if found_it:
+                    SEARCHED[found_it[0]] = found_it
+                    hit = (found_it[0], "Letterboxd search")
+            if hit:
+                add(hit[0], hit[1], name)
         if len(order) >= limit:
             break
 
@@ -462,6 +498,11 @@ def letterboxd_search(title, year=None, any_year=False):
         same = [d for d in results if loose(q) in (loose(d.get("name") or ""), loose(d.get("originalName") or ""))]
         if year:
             same = [d for d in same if d.get("releaseYear") and abs(int(d["releaseYear"]) - int(year)) <= 1]
+            if not same:            # same year, title written a little differently ("Απ' τον" / "Από τον")
+                close = lambda t: difflib.SequenceMatcher(None, loose(q).replace(" ", ""),
+                                                          loose(t).replace(" ", "")).ratio() >= 0.8
+                same = [d for d in results if d.get("releaseYear") and abs(int(d["releaseYear"]) - int(year)) <= 1
+                        and (close(d.get("name") or "") or close(d.get("originalName") or ""))]
         elif any_year:
             same = same[:1]                     # Letterboxd's own best match
         else:

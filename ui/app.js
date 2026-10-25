@@ -130,12 +130,29 @@ function renderMadison(){
     const dayTag = d => `<span class="tag day${d === t ? " is-today" : ""}">${d === t ? "today" : shortDay(d)}</span>`;
     const when = x.allWeek ? `<span class="tag week" title="a regular run, any day this week">all week</span>`
                            : (x.days || []).slice(0, 4).map(dayTag).join("");
+    // Does it carry on next week? The newsletter's "next week" section is a
+    // preview of what's new, not a full listing (that comes with Wednesday's
+    // issue), so only what's certain is marked: listed there, or a one-off
+    // screening whose dates are all this week. A regular run not in the
+    // preview may well continue: "?".
+    let carry = "";
+    if (MAD.showing === "now" && d.soon.length) {
+      const nx = MAD.soon.get(x.slug);
+      if (nx)
+        carry = `<span class="tag today" title="also in next week's listings: ${(nx.venues || []).join(", ")}">\u2713 next week too</span>`;
+      else if (!x.allWeek && (x.days || []).length)
+        carry = `<span class="tag" title="its screenings are all this week">\u2717 not next week</span>`;
+      else
+        carry = `<span class="tag" title="not in next week's preview, which only lists what's new; Wednesday's newsletter will say if it continues">next week ?</span>`;
+    } else if (MAD.showing === "soon" && !MAD.now.has(x.slug)) {
+      carry = `<span class="tag week" title="not playing this week">new</span>`;
+    }
     return `<div class="mad"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
       + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
       + `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
       + hitStats(x)
       + (x.section ? `<span class="tag">${x.section}</span>` : "")
-      + when
+      + when + carry
       + (x.note ? `<span class="tag">${x.note}</span>` : "") + `</div>`
       + `<div class="mv">${venueLinks(x) || "venues not listed"}`
       + (x.allWeek ? ` \u00b7 <a href="https://www.google.com/search?q=${encodeURIComponent(x.title + " showtimes Madison WI")}" target="_blank" rel="noopener">showtimes</a>` : "")

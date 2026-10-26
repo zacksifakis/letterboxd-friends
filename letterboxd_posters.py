@@ -38,7 +38,7 @@ INDEX = os.path.join(HOME, ".letterboxd_cache", "posters.json")
 TOP = 100                   # decades and the current year
 YEAR_TOP = 40               # every other year
 W, H = 70, 105              # stored size; shown at about half, so sharp on Retina
-WEBP_QUALITY = 65
+WEBP_QUALITY = 58           # 65 → 58 (Oct 2026) to fit the Greek page's growing details
 RETRY_FAILED_AFTER_DAYS = 3
 
 

@@ -178,6 +178,18 @@ def build_data():
         if not entry[3] and pg.get("min"):
             entry[3] = pg["min"]
 
+    # The genre as Wikipedia's first sentence puts it ("ψυχολογικό δράμα"),
+    # translated once per phrase; shown in place of the basic genres, which
+    # still drive the genre filter.
+    try:
+        import letterboxd_wikigenre as wg
+        for slug, (_, el) in wg.phrases().items():
+            if el and slug in index:
+                entry = details.setdefault(index[slug], [[], [], [], 0, "", ""])
+                entry[6:] = [el]
+    except Exception as e:
+        print(f"Wikipedia genres unavailable ({e})")
+
     stats = {
         "films": len(films),
         "greek_titles": sum(1 for f in films if f[3]),
@@ -509,7 +521,7 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
 </div>
 
 <footer>
-  <div class="wrap">Από δημόσια προφίλ του Letterboxd. Δεν συνδέεται με το Letterboxd ούτε έχει την έγκρισή του. Στοιχεία ταινιών: Wikidata (CC0) και Letterboxd. Αφίσες: Letterboxd. Οι σύνδεσμοι οδηγούν στο Letterboxd, στο Rotten Tomatoes και στη Βικιπαίδεια.__TMDB_NOTE__</div>
+  <div class="wrap">Από δημόσια προφίλ του Letterboxd. Δεν συνδέεται με το Letterboxd ούτε έχει την έγκρισή του. Στοιχεία ταινιών: Wikidata (CC0), Βικιπαίδεια (είδος) και Letterboxd. Αφίσες: Letterboxd. Οι σύνδεσμοι οδηγούν στο Letterboxd, στο Rotten Tomatoes και στη Βικιπαίδεια.__TMDB_NOTE__</div>
 </footer>
 </div>
 
@@ -601,7 +613,8 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
     let h = "";
     if (dir.length) h += `<dt>Σκηνοθεσία</dt><dd>${esc(dir.join(", "))}</dd>`;
     if (cast.length) h += `<dt>Πρωταγωνιστούν</dt><dd>${esc(cast.slice(0, castCount).join(", "))}</dd>`;
-    if (genres.length) h += `<dt>Είδος</dt><dd>${esc(genres.join(" · "))}</dd>`;
+    if (d[6]) h += `<dt>Είδος</dt><dd>${esc(d[6])}</dd>`;
+    else if (genres.length) h += `<dt>Είδος</dt><dd>${esc(genres.join(" · "))}</dd>`;
     if (mins) h += `<dt>Διάρκεια</dt><dd>${mins} λεπτά</dd>`;
     return h;
   }
@@ -624,7 +637,8 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
   function metaLine(i){
     const d = DETAILS[i], parts = [];
     if (d){
-      if (d[2].length) parts.push(d[2].slice(0, 2).join(", "));
+      if (d[6]) parts.push(d[6]);
+      else if (d[2].length) parts.push(d[2].slice(0, 2).join(", "));
       if (d[0].length) parts.push(`σκην. ${d[0][0]}`);
       if (d[1].length) parts.push(d[1].slice(0, 3).join(", "));
     }

@@ -55,6 +55,11 @@ _SKIP = re.compile(r"^(?:[A-Z][a-zé]+(?:[-–][A-Z][a-zé]+)*|independent|featu
                    r"[A-Z][a-z]+-language|live-action)$")
 
 
+# Capitalised words that are part of the genre, not a nationality.
+_GENRE_CAPS = {"gothic", "western", "christmas", "halloween", "biblical", "victorian", "lovecraftian",
+               "shakespearean", "kafkaesque", "bollywood", "noir", "giallo", "wuxia", "kaiju"}
+
+
 def genre_phrase(sentence):
     """'X is a 2026 American psychological horror film directed by …' → 'psychological horror'."""
     m = re.search(r"\b(?:is|was) an? (?:(?:\d{4}|upcoming|unreleased|forthcoming)\s+)*(.{2,120}?)\s+"
@@ -62,7 +67,7 @@ def genre_phrase(sentence):
     if not m:
         return ""
     words = [w for w in re.split(r"\s+", m.group(1).replace(" and ", " and ")) if w]
-    while words and (_SKIP.match(words[0]) or re.fullmatch(r"\d{4}", words[0])):
+    while words and words[0].lower() not in _GENRE_CAPS and (_SKIP.match(words[0]) or re.fullmatch(r"\d{4}", words[0])):
         words.pop(0)
     phrase = " ".join(words).strip(" ,")
     if not phrase or len(phrase) > 60 or re.search(r"\b(directed|written|starring|based)\b", phrase):
@@ -100,7 +105,7 @@ def _first_sentences(titles):
     for i in range(0, len(titles), 20):
         batch = titles[i:i + 20]
         url = API + "?" + urllib.parse.urlencode({
-            "action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1, "exsentences": 1,
+            "action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1, "exsentences": 3,
             "exlimit": 20, "redirects": 1, "titles": "|".join(batch), "format": "json"})
         data = wd.fetch_json(url)
         q = data.get("query", {})
@@ -123,8 +128,6 @@ def fetch(slugs=None, log=log):
     todo = [s for s in slugs if (wdc.get("films", {}).get(s) or {}).get("q")
             and (s not in cache or (s in recent and now - cache[s].get("at", 0) > RECHECK_DAYS * 86400))]
     log(f"wikipedia genres: {len(todo):,} films to look up")
-    if not todo:
-        return 0
     q_of = {s: wdc["films"][s]["q"] for s in todo}
     titles = _enwiki_titles(list(set(q_of.values())))
     by_title = {}
@@ -138,6 +141,30 @@ def fetch(slugs=None, log=log):
         phrase = genre_phrase(sentences.get(t, "")) if t else ""
         cache[s] = {"title": t or "", "phrase": phrase, "at": now}
         found += bool(phrase)
+
+    # Films Wikidata doesn't link to Letterboxd yet (common for new releases):
+    # try the usual article names, accepting one only if its first sentence
+    # says it's a film from that year.
+    films = gt.films()
+    unlinked = [s for s in slugs if s in films and not (wdc.get("films", {}).get(s) or {}).get("q")
+                and (s not in cache or (s in recent and now - cache[s].get("at", 0) > RECHECK_DAYS * 86400))]
+    if unlinked:
+        guesses = {}
+        for s in unlinked:
+            t, y, _ = films[s]
+            for g in ([f"{t} ({y} film)"] if y else []) + [f"{t} (film)", t]:
+                guesses.setdefault(g, []).append(s)
+        text = _first_sentences(list(guesses))
+        for s in unlinked:
+            t, y, _ = films[s]
+            cache[s] = {"title": "", "phrase": "", "at": now}
+            for g in ([f"{t} ({y} film)"] if y else []) + [f"{t} (film)", t]:
+                sent = text.get(g, "")
+                if y and re.search(rf"\b(?:is|was) an? {y}\b", sent) and genre_phrase(sent):
+                    cache[s] = {"title": g, "phrase": genre_phrase(sent), "at": now}
+                    found += 1
+                    break
+        log(f"wikipedia genres: {len(unlinked):,} films not linked on Wikidata, looked up by title")
     _save(CACHE, cache)
     log(f"wikipedia genres: {found:,} of {len(todo):,} have a genre phrase")
     return found

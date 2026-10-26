@@ -109,7 +109,8 @@ def fetch(max_n=None, delay=1.0, log=print):
         recent, every = set(), RECHECK_DAYS
     # this year's and last year's films weekly (Greek titles and genres arrive late), the rest every 60 days
     todo = [s for s in targets()
-            if s not in cache or now - cache[s].get("at", 0) > (every if s in recent else RECHECK_DAYS) * 86400]
+            if s not in cache or "min" not in cache[s]          # read before cast and running time were kept
+            or now - cache[s].get("at", 0) > (every if s in recent else RECHECK_DAYS) * 86400]
     if max_n:
         todo = todo[:max_n]
     log(f"film pages: {len(todo)} to fetch")
@@ -140,7 +141,9 @@ def fetch(max_n=None, delay=1.0, log=print):
             streak = 0
             genres, greek = parse(page)
             dirs, cast = people(page)
-            cache[slug] = {"genres": genres, "el": greek, "dir": dirs, "cast": cast, "at": now}
+            mins = re.search(r"(\d{1,3})&nbsp;mins", page)
+            cache[slug] = {"genres": genres, "el": greek, "dir": dirs, "cast": cast,
+                           "min": int(mins.group(1)) if mins else 0, "at": now}
             got += 1
         if i % 100 == 0:
             _save(cache)

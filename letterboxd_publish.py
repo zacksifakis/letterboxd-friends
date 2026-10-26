@@ -99,6 +99,50 @@ def poster_line(posters, poster_min):
     return f"posters: {len(posters):,} embedded ({kb:.1f} MB) across {len(poster_min)} lists"
 
 
+PLOTS_EN = os.path.join(HOME, ".letterboxd_cache", "plots_en_claude.json")
+
+
+def _load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _genre_name(label):
+    """'science fiction film' → 'Science fiction' (Wikidata's genre labels)."""
+    label = re.sub(r"\s+film$", "", (label or "").strip())
+    return label[:1].upper() + label[1:] if label else ""
+
+
+def film_details(index):
+    """
+    {film number: [directors, cast, genres, minutes]} and {film number: summary}
+    for the English page's details panel: Wikidata first, Letterboxd's film
+    pages where it has nothing (usual for new releases), and short summaries
+    Claude wrote (plots_en_claude.json).
+    """
+    wd = _load_json(os.path.join(HOME, ".letterboxd_cache", "wikidata_el.json"), {})
+    detail, labels = wd.get("detail", {}), wd.get("labels", {})
+    pages = _load_json(os.path.join(HOME, ".letterboxd_cache", "filmpages.json"), {})
+    facts = _load_json(os.path.join(HOME, ".letterboxd_cache", "plot_facts.json"), {})
+    en = lambda q: re.sub(r"\s*\([^)]*\)\s*$", "", (labels.get(q) or {}).get("en", "")).strip()
+    out = {}
+    for slug, i in index.items():
+        d, pg, fa = detail.get(slug) or {}, pages.get(slug) or {}, facts.get(slug) or {}
+        dirs = [n for n in map(en, d.get("dir", [])) if n] or pg.get("dir") or \
+            [x for x in fa.get("director", []) if x.strip() and "*/" not in x]
+        cast = [n for n in map(en, d.get("cast", [])) if n] or pg.get("cast") or \
+            [x for x in fa.get("cast", []) if x.strip() and "*/" not in x]
+        genres = pg.get("genres") or [g for g in (_genre_name(en(q)) for q in d.get("genre", [])) if g]
+        mins = d.get("min") or pg.get("min") or 0
+        if dirs or cast or genres or mins:
+            out[i] = [dirs[:3], cast[:6], list(dict.fromkeys(genres))[:3], mins]
+    plots = {index[s]: t for s, t in _load_json(PLOTS_EN, {}).items() if s in index and t}
+    return out, plots
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit("usage: python3 letterboxd_publish.py OUTPUT.html")
@@ -138,7 +182,8 @@ def main():
         periods[p] = {"asOf": datetime.date.fromtimestamp(stamp).isoformat(), "rows": packed}
 
     house = house_size()
-    base = {"house": house, "films": films, "periods": periods}
+    details, plots = film_details(index)
+    base = {"house": house, "films": films, "periods": periods, "details": details, "plots": plots}
     posters, poster_min = attach_posters(base, len(TEMPLATE))
     page = (TEMPLATE.replace("__HOUSE__", str(house)).replace("__FOLLOW__", str(follow_size()))
                     .replace("__DATA__", pack(dict(base, posterMin=poster_min)))
@@ -158,7 +203,8 @@ def main():
 
     n_rows = sum(len(v["rows"]) for v in periods.values())
     print(f"wrote {out}: {len(periods)} lists, {n_rows:,} rows, {len(films):,} films, "
-          f"house of {house}, {os.path.getsize(out) / 1e6:.1f} MB")
+          f"house of {house}, details for {len(details):,}, summaries for {len(plots):,}, "
+          f"{os.path.getsize(out) / 1e6:.1f} MB")
     print(poster_line(posters, poster_min))
 
 
@@ -311,6 +357,17 @@ tr.p td{vertical-align:middle}
 .chip:hover{border-color:var(--accent)}
 .notes{margin:0;padding-left:16px;color:var(--muted);font-size:13.5px;display:grid;gap:6px}
 
+.fm{margin-top:2px;color:var(--muted);font-size:12.5px;line-height:1.45;font-weight:400}
+.info{all:unset;cursor:pointer;color:var(--accent);font:500 12px var(--body);margin-left:6px;white-space:nowrap}
+.info:hover{text-decoration:underline}
+.info:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+tr.drow td{background:var(--surface);padding:12px 8px 16px}
+.plot{margin:0 0 12px;max-width:68ch;font-size:14.5px;line-height:1.6;text-wrap:pretty}
+.pnote{display:block;margin-top:5px;color:var(--faint);font:400 11.5px/1.4 var(--mono)}
+.facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin:0 0 10px;font-size:14px}
+.facts dt{color:var(--muted);font:400 12px/1.9 var(--mono)}
+.facts dd{margin:0}
+.links a{color:var(--accent);font-size:13.5px}
 footer{border-top:1px solid var(--rule)}
 footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--faint)}
 
@@ -421,7 +478,7 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
 </div>
 
 <footer>
-  <div class="wrap">Compiled from public Letterboxd profiles. Not affiliated with or endorsed by Letterboxd. Film links and posters: letterboxd.com.</div>
+  <div class="wrap">Compiled from public Letterboxd profiles. Not affiliated with or endorsed by Letterboxd. Film links and posters: letterboxd.com. Film details: Wikidata (CC0) and Letterboxd. Short summaries marked as such are written by Claude.</div>
 </footer>
 
 <script id="data" type="text/plain">__DATA__</script>
@@ -534,12 +591,36 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
   const CHUNK = 400;
   let cur = null, sortKey = "count", sortDir = -1, view = [], rendered = 0;
 
+  /* ---------- details: plot, director, cast, genres, running time ---------- */
+  const DETAILS = DATA.details || {}, PLOTS = DATA.plots || {};
+  function metaLine(i){
+    const d = DETAILS[i], parts = [];
+    if (d){
+      if (d[2].length) parts.push(d[2].slice(0, 2).join(", "));
+      if (d[0].length) parts.push(`dir. ${d[0][0]}`);
+      if (d[1].length) parts.push(d[1].slice(0, 3).join(", "));
+    }
+    if (!PLOTS[i] && !parts.length && !(d && d[3])) return "";
+    return `<div class="fm">${esc(parts.join(" · "))}<button class="info" type="button" aria-expanded="false">more</button></div>`;
+  }
+  function detailsHtml(i){
+    const d = DETAILS[i] || [[], [], [], 0], [dir, cast, genres, mins] = d;
+    let facts = "";
+    if (dir.length) facts += `<dt>Director</dt><dd>${esc(dir.join(", "))}</dd>`;
+    if (cast.length) facts += `<dt>Cast</dt><dd>${esc(cast.join(", "))}</dd>`;
+    if (genres.length) facts += `<dt>Genre</dt><dd>${esc(genres.join(" · "))}</dd>`;
+    if (mins) facts += `<dt>Running time</dt><dd>${mins} min</dd>`;
+    return (PLOTS[i] ? `<p class="plot">${esc(PLOTS[i])}<span class="pnote">short summary written by Claude</span></p>` : "")
+      + (facts ? `<dl class="facts">${facts}</dl>` : "")
+      + `<div class="links"><a href="${filmUrl(i)}" target="_blank" rel="noopener">Letterboxd</a></div>`;
+  }
+
   function rowHtml(x){
     const [, title, year] = FILMS[x.f], p = hasPoster(x);
     return `<tr class="${x.r <= 10 ? "top" : ""}${p ? " p" : ""}" data-f="${x.f}">`
       + `<td class="rank r">${x.r}</td>`
       + `<td class="film">${withPoster(x, filmUrl(x.f),
-          `<a href="${filmUrl(x.f)}" target="_blank" rel="noopener">${esc(title)}</a>`)}</td>`
+          `<a href="${filmUrl(x.f)}" target="_blank" rel="noopener">${esc(title)}</a>${metaLine(x.f)}`)}</td>`
       + `<td class="yr">${year || "—"}</td>`
       + `<td class="seats r">${x.c}</td>`
       + `<td class="bar"><span style="--w:${(100 * x.c / HOUSE).toFixed(1)}%"></span></td></tr>`;
@@ -608,6 +689,18 @@ footer .wrap{padding-block:18px 30px;font:400 12px/1.6 var(--mono);color:var(--f
   $("filter").addEventListener("input", buildView);
   $("minSeats").addEventListener("change", buildView);
   $("loadMore").addEventListener("click", append);
+  $("tb").addEventListener("click", e => {
+    const btn = e.target.closest(".info");
+    if (!btn) return;
+    const tr = btn.closest("tr"), i = +tr.dataset.f, open = btn.getAttribute("aria-expanded") === "true";
+    if (open){
+      if (tr.nextElementSibling && tr.nextElementSibling.classList.contains("drow")) tr.nextElementSibling.remove();
+    } else {
+      tr.insertAdjacentHTML("afterend", `<tr class="drow"><td></td><td colspan="4">${detailsHtml(i)}</td></tr>`);
+    }
+    btn.setAttribute("aria-expanded", String(!open));
+    btn.textContent = open ? "more" : "less";
+  });
   window.addEventListener("scroll", () => {
     if (rendered < view.length &&
         window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 1600) append();

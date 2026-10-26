@@ -167,7 +167,7 @@ def build_data():
         pg, fa = pages.get(slug) or {}, facts.get(slug) or {}
         dirs = pg.get("dir") or [x for x in fa.get("director", []) if x.strip() and "*/" not in x]
         cast = pg.get("cast") or [x for x in fa.get("cast", []) if x.strip() and "*/" not in x]
-        if not (dirs or cast):
+        if not (dirs or cast or pg.get("min")):
             continue
         i = index[slug]
         entry = details.setdefault(i, [[], [], [], 0, "", ""])
@@ -175,6 +175,8 @@ def build_data():
             entry[0] = dirs[:3]
         if not entry[1] and cast:
             entry[1] = cast[:6]
+        if not entry[3] and pg.get("min"):
+            entry[3] = pg["min"]
 
     stats = {
         "films": len(films),

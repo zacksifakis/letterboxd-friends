@@ -154,6 +154,28 @@ def build_data():
         else:
             details[i] = [[], [], g, 0, "", ""]
 
+    # Director and cast from Letterboxd's film pages where Wikidata has none
+    # (usual for new releases): names as Letterboxd writes them.
+    try:
+        with open(os.path.join(HOME, ".letterboxd_cache", "plot_facts.json")) as f:
+            facts = json.load(f)
+    except Exception:
+        facts = {}
+    for slug in set(pages) | set(facts):
+        if slug not in index:
+            continue
+        pg, fa = pages.get(slug) or {}, facts.get(slug) or {}
+        dirs = pg.get("dir") or [x for x in fa.get("director", []) if x.strip() and "*/" not in x]
+        cast = pg.get("cast") or [x for x in fa.get("cast", []) if x.strip() and "*/" not in x]
+        if not (dirs or cast):
+            continue
+        i = index[slug]
+        entry = details.setdefault(i, [[], [], [], 0, "", ""])
+        if not entry[0] and dirs:
+            entry[0] = dirs[:3]
+        if not entry[1] and cast:
+            entry[1] = cast[:6]
+
     stats = {
         "films": len(films),
         "greek_titles": sum(1 for f in films if f[3]),

@@ -70,9 +70,26 @@ def parse(page):
     return genres, greek
 
 
+def people(page):
+    """(directors, top-billed cast) from a Letterboxd film page — Wikidata often
+    has neither for new releases."""
+    dirs = [htmlmod.unescape(x).strip() for x in re.findall(r'/director/[^/"]+/"[^>]*>(?:<span[^>]*>)?([^<]+)<', page)]
+    cast = [htmlmod.unescape(x).strip() for x in re.findall(r'/actor/[^/"]+/"[^>]*>([^<]+)<', page)]
+    clean = lambda xs, n: [x for x in dict.fromkeys(xs) if x and "*/" not in x][:n]
+    return clean(dirs, 3), clean(cast, 6)
+
+
 def targets():
+    """The films that get posters, then the rest of every list's top 100."""
     import letterboxd_posters as lp
-    return lp.wanted()
+    out = lp.wanted()
+    seen = set(out)
+    for ranked in lp._lists().values():
+        for s in lp.top_slugs(ranked, 100):
+            if s not in seen:
+                seen.add(s)
+                out.append(s)
+    return out
 
 
 def fetch(max_n=None, delay=1.0, log=print):
@@ -122,7 +139,8 @@ def fetch(max_n=None, delay=1.0, log=print):
         else:
             streak = 0
             genres, greek = parse(page)
-            cache[slug] = {"genres": genres, "el": greek, "at": now}
+            dirs, cast = people(page)
+            cache[slug] = {"genres": genres, "el": greek, "dir": dirs, "cast": cast, "at": now}
             got += 1
         if i % 100 == 0:
             _save(cache)

@@ -91,6 +91,19 @@ function venueLinks(x){
     ? `<a href="${links[v]}" target="_blank" rel="noopener">${v}</a>` : v).join(", ");
 }
 
+// A guess from the weekend box office you pasted, with its numbers on hover.
+const usd = v => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e4 ? `$${Math.round(v / 1e3)}K` : `$${Math.round(v).toLocaleString()}`;
+function boxTag(b){
+  const nums = [`#${b.rank} last weekend`, usd(b.gross) + (b.change != null ? ` (${b.change > 0 ? "+" : ""}${Math.round(b.change)}%)` : "")]
+    .concat(b.theaters ? [`${b.theaters.toLocaleString()} theaters` + (b.thChange ? ` (${b.thChange > 0 ? "+" : ""}${b.thChange.toLocaleString()})` : "")] : [])
+    .concat(b.avg ? [`${usd(b.avg)} per theater`] : [])
+    .concat(b.weeks ? [`week ${b.weeks}`] : []).join(" \u00b7 ");
+  const why = b.why ? ` \u2014 ${b.why}` : "";
+  const title = `${nums}${why}. A guess from the box office you pasted; Wednesday's newsletter will say for sure.`;
+  const label = b.hint === "likely" ? "next week: likely" : b.hint === "unlikely" ? "next week: unlikely" : "next week ?";
+  return `<span class="tag ${b.hint}" title="${title.replace(/"/g, "&quot;")}">${label}</span>`;
+}
+
 function renderMadison(){
   const d = MAD.data;
   if (!d || (!d.now.length && !d.soon.length)){ $("madCard").hidden = true; return; }
@@ -142,6 +155,8 @@ function renderMadison(){
         carry = `<span class="tag today" title="also in next week's listings: ${(nx.venues || []).join(", ")}">\u2713 next week too</span>`;
       else if (!x.allWeek && (x.days || []).length)
         carry = `<span class="tag" title="its screenings are all this week">\u2717 not next week</span>`;
+      else if (x.box)
+        carry = boxTag(x.box);
       else
         carry = `<span class="tag" title="not in next week's preview, which only lists what's new; Wednesday's newsletter will say if it continues">next week ?</span>`;
     } else if (MAD.showing === "soon" && !MAD.now.has(x.slug)) {
@@ -162,8 +177,30 @@ function renderMadison(){
   $("madMore").textContent = filtered.length > 10 ? (MAD.all ? "show fewer" : `show all ${filtered.length}`) : "";
   const other = MAD.showing === "now" ? d.soon.length : d.now.length;
   $("madToggle").textContent = other ? (MAD.showing === "now" ? `coming next week (${other})` : "back to this week") : "";
+  const bx = d.boxoffice;
+  $("madBoxLink").textContent = MAD.showing !== "now" ? ""
+    : bx ? `box office${bx.weekend ? " for " + bx.weekend.replace(/,? \d{4}$/, "") : ""} \u00b7 pasted ${ago(bx.at)}`
+    : "paste weekend box office";
   $("madCard").hidden = false;
 }
+
+async function sendBoxOffice(text){
+  $("madBoxMsg").textContent = "";
+  let res;
+  try {
+    res = await fetch("/api/boxoffice", {method: "POST", headers: {"Content-Type": "application/json"},
+                                         body: JSON.stringify({text})});
+  } catch (e) { $("madBoxMsg").textContent = "couldn't reach the app"; return; }
+  const d = await res.json();
+  if (!res.ok) { $("madBoxMsg").textContent = d.error; return; }
+  await loadMadison();
+  const hinted = MAD.data.now.filter(x => x.box).length;
+  $("madBoxMsg").textContent = text.trim() ? `read ${d.rows} films · ${hinted} playing in Madison this week` : "cleared";
+  if (text.trim()) $("madBoxText").value = "";
+}
+$("madBoxLink").onclick = e => { e.preventDefault(); $("madBox").hidden = !$("madBox").hidden; if (!$("madBox").hidden) $("madBoxText").focus(); };
+$("madBoxGo").onclick = () => sendBoxOffice($("madBoxText").value);
+$("madBoxClear").onclick = () => sendBoxOffice("");
 
 function showMadison(tr){
   const btn = tr.querySelector(".madb"), slug = tr.dataset.slug;

@@ -993,9 +993,21 @@ def madison_listings():
         item["seats"], item["seatsIn"] = (seats if seats else (0, ""))
         item.update(stats.get(e["slug"], {"rating": None, "ratings": 0, "liked": None}))
 
+    # The weekend box office you pasted, matched to this week's films: a hint
+    # for whether a run carries on when the newsletter's preview can't say.
+    import letterboxd_boxoffice as bo
+    chart = bo.load()
+    for item in now.values():
+        r = bo.match(chart["rows"], item["title"]) if chart else None
+        if r:
+            hint, why = bo.guess(r)
+            item["box"] = {**r, "hint": hint, "why": why}
+
     order = lambda d: sorted(d.values(), key=lambda x: (-x["seats"], x["title"].lower()))
     return {"asOf": data.get("asOf", ""), "latest": data.get("latest"),
             "now": order(now), "soon": order(soon),
+            "boxoffice": {"at": chart["at"], "weekend": chart.get("weekend", ""),
+                          "rows": len(chart["rows"])} if chart else None,
             "running": madison_job["running"], "error": madison_job["error"]}
 
 
@@ -1476,6 +1488,19 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/seen/refresh":
             threading.Thread(target=refresh_my_films, daemon=True).start()
             return self._send(200, {"started": True})
+
+        if u.path == "/api/boxoffice":           # a pasted weekend chart; empty text clears it
+            import letterboxd_boxoffice as bo
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                text = str(json.loads(self.rfile.read(n) or b"{}").get("text", ""))
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "bad json"})
+            rows = bo.save(text[:200_000])
+            if text.strip() and not rows:
+                return self._send(400, {"error": "couldn't find a weekend chart in that — "
+                                                 "copy the table rows with their dollar figures"})
+            return self._send(200, {"rows": len(rows)})
 
         if u.path == "/api/quit":
             self._send(200, {"bye": True})

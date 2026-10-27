@@ -128,6 +128,11 @@
        border-radius:3px;padding:0 5px;margin-left:6px;vertical-align:1px}
   .tag.today{color:var(--green);border-color:rgba(0,224,84,.5)}
   .tag.week{color:var(--blue);border-color:rgba(64,188,244,.45)}
+  .tag.likely{color:var(--green);border-color:rgba(0,224,84,.3);border-style:dashed}
+  .tag.unlikely{border-style:dashed}
+  #madBoxText{width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:7px;padding:10px;font:12px/1.4 ui-monospace,Menlo,monospace;resize:vertical}
+  #madBoxText:focus{outline:none;border-color:var(--green)}
   .tag.day{color:var(--orange);border-color:rgba(255,128,0,.45)}
   .tag.day.is-today{color:var(--green);border-color:rgba(0,224,84,.5)}
   .modes.small{flex-wrap:wrap}

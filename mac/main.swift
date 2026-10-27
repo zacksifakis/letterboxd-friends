@@ -104,6 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             WKUserScript(source: hideQuit, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
         web = WKWebView(frame: .zero, configuration: config)
+        let savedZoom = UserDefaults.standard.double(forKey: "pageZoom")
+        if savedZoom > 0 { web.pageZoom = CGFloat(savedZoom) }
         web.uiDelegate = self
         web.navigationDelegate = self
         web.underPageBackgroundColor = NSColor(red: 0.078, green: 0.094, blue: 0.11, alpha: 1)
@@ -206,6 +208,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let viewItem = NSMenuItem(); bar.addItem(viewItem)
         let view = NSMenu(title: "View")
         view.addItem(withTitle: "Reload", action: #selector(reload), keyEquivalent: "r")
+        view.addItem(.separator())
+        view.addItem(withTitle: "Actual Size", action: #selector(zoomReset), keyEquivalent: "0")
+        view.addItem(withTitle: "Zoom In", action: #selector(zoomIn), keyEquivalent: "+")
+        // ⌘= too: on most keyboards "+" needs Shift, so ⌘= is what people press
+        let zoomInAlt = view.addItem(withTitle: "Zoom In", action: #selector(zoomIn), keyEquivalent: "=")
+        zoomInAlt.isAlternate = true
+        zoomInAlt.keyEquivalentModifierMask = [.command]
+        view.addItem(withTitle: "Zoom Out", action: #selector(zoomOut), keyEquivalent: "-")
         viewItem.submenu = view
 
         let windowItem = NSMenuItem(); bar.addItem(windowItem)
@@ -217,6 +227,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         NSApp.mainMenu = bar
     }
+
+    // MARK: zoom (⌘+ / ⌘- / ⌘0), remembered between launches
+
+    let zoomSteps: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+    func setZoom(_ z: CGFloat) {
+        web.pageZoom = z
+        UserDefaults.standard.set(Double(z), forKey: "pageZoom")
+    }
+
+    @objc func zoomIn() {
+        setZoom(zoomSteps.first(where: { $0 > web.pageZoom + 0.001 }) ?? zoomSteps.last!)
+    }
+
+    @objc func zoomOut() {
+        setZoom(zoomSteps.last(where: { $0 < web.pageZoom - 0.001 }) ?? zoomSteps.first!)
+    }
+
+    @objc func zoomReset() { setZoom(1.0) }
 
     @objc func reload() {
         if web.url?.host == HOST {

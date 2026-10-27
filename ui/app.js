@@ -177,12 +177,39 @@ function renderMadison(){
   $("madMore").textContent = filtered.length > 10 ? (MAD.all ? "show fewer" : `show all ${filtered.length}`) : "";
   const other = MAD.showing === "now" ? d.soon.length : d.now.length;
   $("madToggle").textContent = other ? (MAD.showing === "now" ? `coming next week (${other})` : "back to this week") : "";
-  const bx = d.boxoffice;
+  const bx = d.boxoffice, L = d.learned;
   $("madBoxLink").textContent = MAD.showing !== "now" ? ""
-    : bx ? `box office${bx.weekend ? " for " + bx.weekend.replace(/,? \d{4}$/, "") : ""} \u00b7 pasted ${ago(bx.at)}`
-    : "paste weekend box office";
+    : (bx ? `box office${bx.weekend ? " for " + bx.weekend.replace(/,? \d{4}$/, "") : ""} \u00b7 pasted ${ago(bx.at)}`
+          : "paste weekend box office")
+      + (L && L.weekends ? ` \u00b7 learned from ${L.weekends} weekend${L.weekends === 1 ? "" : "s"}` : "");
+  $("madBoxRecord").innerHTML = boxRecord(L, d.charts || []);
   $("madCard").hidden = false;
 }
+
+// How past guesses held up, once a chart's following week has been listed.
+function boxRecord(L, charts){
+  const saved = charts.length
+    ? `Charts kept: ${charts.map(shortDate).join(", ")}.` : "";
+  if (!L || !L.examples)
+    return `Every chart you paste is kept. Once the following week's newsletter is out, the app checks which films really carried on, `
+      + `and the guesses get better as weeks add up. Past weekends count too: the newsletter history goes back to July 16, `
+      + `so pasting those weekends' charts (several at once is fine) teaches it straight away. ${saved}`;
+  const pct = ([n, k]) => n ? `${Math.round(100 * k / n)}% <span class="n">(${n})</span>` : "\u2014";
+  const row = list => list.map(([lab, nk]) => `${lab} ${pct(nk)}`).join(" \u00b7 ");
+  let s = `<b>From ${L.weekends} weekend${L.weekends === 1 ? "" : "s"}</b>, ${L.examples} regular runs, ${L.held} carried on. `
+    + `The rules got <b>${L.rulesRight} of ${L.rulesSure}</b> sure guesses right.<br>`
+    + `Carried on, by week of release: ${row(L.trends.weeks)}<br>`
+    + `By take per theater: ${row(L.trends.avg)}<br>`;
+  if (L.usingModel)
+    s += `Now guessing from a pattern fitted to these weeks: it got ${L.modelRight} of ${L.modelSure} right on weekends it hadn't seen, against ${L.rulesRight} for the rules.`;
+  else if (L.modelSure !== undefined)
+    s += `A pattern fitted to these weeks didn't beat the rules yet (${L.modelRight} of ${L.modelSure}), so the rules stay.`;
+  else
+    s += `With ${30 - Math.min(30, L.examples)} more examples it will try fitting its own pattern, and use it only if it beats the rules.`;
+  return s + `<br>${saved}`;
+}
+
+
 
 async function sendBoxOffice(text){
   $("madBoxMsg").textContent = "";
@@ -195,7 +222,9 @@ async function sendBoxOffice(text){
   if (!res.ok) { $("madBoxMsg").textContent = d.error; return; }
   await loadMadison();
   const hinted = MAD.data.now.filter(x => x.box).length;
-  $("madBoxMsg").textContent = text.trim() ? `read ${d.rows} films · ${hinted} playing in Madison this week` : "cleared";
+  $("madBoxMsg").textContent = !text.trim() ? "cleared"
+    : (d.weekends.length > 1 ? `kept ${d.weekends.length} weekends · newest: ` : "")
+      + `read ${d.rows} films · ${hinted} playing in Madison this week`;
   if (text.trim()) $("madBoxText").value = "";
 }
 $("madBoxLink").onclick = e => { e.preventDefault(); $("madBox").hidden = !$("madBox").hidden; if (!$("madBox").hidden) $("madBoxText").focus(); };

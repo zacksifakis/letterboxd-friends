@@ -771,6 +771,26 @@ def _film_identity(slug):
     return None
 
 
+def _record_weeks(reports, ns):
+    """Keep each issue's own week (its full listings, not the next-week preview)
+    in madison_weeks.json, so weekend box office can later be checked against
+    what actually carried on. Kept beyond what the feed still holds."""
+    import letterboxd_boxoffice as bo
+    weeks = bo._load(bo.WEEKS, {})
+    for it in reports:
+        for e in _parse_report(it.findtext("content:encoded", namespaces=ns) or "",
+                               it.findtext("link") or "", it.findtext("title") or ""):
+            if e["week"] != "This Week":
+                continue
+            w = weeks.setdefault(e["start"], {"end": e["end"], "post": e["post"], "films": {}})
+            if w["post"] != e["post"] and w["films"] and e["slug"] not in w["films"]:
+                continue                         # an older issue's list of the same week
+            f = w["films"].setdefault(e["slug"], {"title": e["title"], "regular": False})
+            # A venue with no date on it is a regular run, not a one-off screening.
+            f["regular"] = f["regular"] or any(not re.search(r"\b\d{1,2}/\d{1,2}\b", v) for v in e["venues"])
+    bo._save(bo.WEEKS, weeks)
+
+
 def refresh_madison():
     if madison_job["running"]:
         return
@@ -782,8 +802,13 @@ def refresh_madison():
             raise RuntimeError(f"the newsletter feed answered HTTP {r.status_code}")
         root = ET.fromstring(r.content)
         ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
-        reports = [it for it in root.findall("./channel/item")
-                   if (it.findtext("title") or "").lower().startswith("screening report")][:2]
+        every = [it for it in root.findall("./channel/item")
+                 if (it.findtext("title") or "").lower().startswith("screening report")]
+        reports = every[:2]
+        try:
+            _record_weeks(every, ns)
+        except Exception as e:                   # the history is a nice-to-have
+            print(f"madison weeks history: {e}", flush=True)
         entries = []
         for it in reversed(reports):             # newer report wins on overlaps
             entries += _parse_report(it.findtext("content:encoded", namespaces=ns) or "",
@@ -1000,14 +1025,17 @@ def madison_listings():
     for item in now.values():
         r = bo.match(chart["rows"], item["title"]) if chart else None
         if r:
-            hint, why = bo.guess(r)
+            hint, why = bo.hint(r)
             item["box"] = {**r, "hint": hint, "why": why}
+    learned = bo.learn()
 
     order = lambda d: sorted(d.values(), key=lambda x: (-x["seats"], x["title"].lower()))
     return {"asOf": data.get("asOf", ""), "latest": data.get("latest"),
             "now": order(now), "soon": order(soon),
             "boxoffice": {"at": chart["at"], "weekend": chart.get("weekend", ""),
                           "rows": len(chart["rows"])} if chart else None,
+            "learned": {k: v for k, v in learned.items() if k != "model"} | {"usingModel": bool(learned["model"])},
+            "charts": sorted(bo._load(bo.HISTORY, {})),
             "running": madison_job["running"], "error": madison_job["error"]}
 
 
@@ -1496,11 +1524,11 @@ class Handler(BaseHTTPRequestHandler):
                 text = str(json.loads(self.rfile.read(n) or b"{}").get("text", ""))
             except json.JSONDecodeError:
                 return self._send(400, {"error": "bad json"})
-            rows = bo.save(text[:200_000])
+            rows, weekends = bo.save(text[:2_000_000])
             if text.strip() and not rows:
                 return self._send(400, {"error": "couldn't find a weekend chart in that — "
                                                  "copy the table rows with their dollar figures"})
-            return self._send(200, {"rows": len(rows)})
+            return self._send(200, {"rows": len(rows), "weekends": weekends})
 
         if u.path == "/api/quit":
             self._send(200, {"bye": True})

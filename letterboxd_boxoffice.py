@@ -18,9 +18,14 @@ import re
 import json
 import time
 import difflib
+import datetime
+import math
 import unicodedata
 
-CACHE = os.path.join(os.path.expanduser("~"), ".letterboxd_cache", "boxoffice.json")
+CACHE_DIR = os.path.join(os.path.expanduser("~"), ".letterboxd_cache")
+CACHE = os.path.join(CACHE_DIR, "boxoffice.json")
+HISTORY = os.path.join(CACHE_DIR, "boxoffice_history.json")    # Friday of the weekend -> chart
+WEEKS = os.path.join(CACHE_DIR, "madison_weeks.json")          # every newsletter week's listings
 KEEP_DAYS = 6             # a chart is about one weekend; after that the next one matters
 
 _MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(m(?:illion)?|k|b(?:illion)?)?\b", re.I)
@@ -180,13 +185,57 @@ def weekend(text):
     return m.group(0) if m else ""
 
 
-def save(text):
-    rows = parse(text) if text.strip() else []
-    tmp = CACHE + ".tmp"
+_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
+def friday(label, today=None):
+    """The weekend's Friday as an ISO date: from "October 23-25, 2026", or,
+    with no label, the last Friday before today (charts come out Sunday/Monday)."""
+    m = re.match(r"([A-Za-z]{3})[a-z]*\.? (\d{1,2}).*?(\d{4})", label or "")
+    if m and m.group(1).lower() in _MONTHS:
+        return datetime.date(int(m.group(3)), _MONTHS.index(m.group(1).lower()) + 1, int(m.group(2))).isoformat()
+    d = today or datetime.date.today()
+    return (d - datetime.timedelta(days=(d.weekday() - 4) % 7 or 7)).isoformat()
+
+
+def _load(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _save(path, d):
+    tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"at": time.time(), "weekend": weekend(text), "rows": rows}, f)
-    os.replace(tmp, CACHE)
-    return rows
+        json.dump(d, f)
+    os.replace(tmp, path)
+
+
+def split(text):
+    """Several charts pasted together, one per weekend heading ("October 23-25, 2026")."""
+    starts = [m.start() for m in re.finditer(
+        r"(?m)^\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}\s?[-–]", text)]
+    if len(starts) < 2:
+        return [text]
+    return [text[a:b] for a, b in zip([0] + starts[1:], starts[1:] + [len(text)])]
+
+
+def save(text):
+    """Use the newest chart now, and keep them all so the guesses can be checked later.
+    Returns (rows in the newest chart, weekends saved)."""
+    charts = [(friday(weekend(t)), weekend(t), parse(t)) for t in split(text)] if text.strip() else []
+    charts = [c for c in charts if c[2]]
+    if charts:
+        hist = _load(HISTORY, {})
+        for fri, label, rows in charts:
+            hist[fri] = {"weekend": label, "at": time.time(), "rows": rows}
+        _save(HISTORY, hist)
+    newest = max(charts) if charts else ("", "", [])
+    if not text.strip() or charts:
+        _save(CACHE, {"at": time.time(), "weekend": newest[1], "rows": newest[2]})
+    return newest[2], [c[0] for c in charts]
 
 
 def load():
@@ -199,3 +248,145 @@ def load():
     if not d.get("rows") or time.time() - d.get("at", 0) > KEEP_DAYS * 86400:
         return None
     return d
+
+
+# ------------------------------------------------- learning from past weeks
+#
+# A chart for the weekend of Friday F belongs to the newsletter week holding F
+# (weeks run Thursday to Wednesday). Each regular run that week that's on the
+# chart is one example; whether it's in the following week's listings is the
+# answer. With enough examples, a small logistic model fitted to them replaces
+# the fixed rules, but only if it does better on weeks it wasn't fitted to.
+
+MIN_EXAMPLES = 30
+
+
+def examples():
+    """[(chart row, held over?, Friday)] for every week with both a chart and the next week's listings."""
+    hist, weeks = _load(HISTORY, {}), _load(WEEKS, {})
+    out = []
+    for fri, chart in sorted(hist.items()):
+        this = next((w for s, w in weeks.items() if s <= fri <= w["end"]), None)
+        if not this:
+            continue
+        nxt = weeks.get((datetime.date.fromisoformat(this["end"]) + datetime.timedelta(days=1)).isoformat())
+        if not nxt:
+            continue
+        later = {norm(f["title"]) for f in nxt["films"].values()} | set(nxt["films"])
+        for slug, f in this["films"].items():
+            if not f.get("regular"):
+                continue
+            r = match(chart["rows"], f["title"])
+            if r and not r.get("reissue"):
+                out.append((r, slug in later or norm(f["title"]) in later, fri))
+    return out
+
+
+def _features(r):
+    th, thc = r.get("theaters") or 0, r.get("thChange") or 0
+    before = th - thc
+    return [math.log10((r.get("gross") or 0) + 1),
+            min(r.get("weeks") or 3, 10),
+            thc / before if before > 0 else 0.0,
+            math.log10((r.get("avg") or 0) + 1)]
+
+
+def _fit(X, y, l2=1.0):
+    """Logistic regression by Newton's method; X is already standardised, with a bias column."""
+    k = len(X[0])
+    w = [0.0] * k
+    for _ in range(25):
+        p = [1 / (1 + math.exp(-max(-30, min(30, sum(a * b for a, b in zip(w, x)))))) for x in X]
+        g = [sum((p[i] - y[i]) * X[i][j] for i in range(len(X))) + (l2 * w[j] if j else 0) for j in range(k)]
+        H = [[sum(p[i] * (1 - p[i]) * X[i][a] * X[i][b] for i in range(len(X))) + (l2 if a == b and a else 0)
+              for b in range(k)] for a in range(k)]
+        H[0][0] += 1e-6
+        step = _solve(H, g)
+        w = [a - b for a, b in zip(w, step)]
+        if max(abs(v) for v in step) < 1e-6:
+            break
+    return w
+
+
+def _solve(A, b):
+    n = len(b)
+    M = [row[:] + [b[i]] for i, row in enumerate(A)]
+    for c in range(n):
+        piv = max(range(c, n), key=lambda r: abs(M[r][c]))
+        M[c], M[piv] = M[piv], M[c]
+        if abs(M[c][c]) < 1e-12:
+            continue
+        for r in range(n):
+            if r != c:
+                f = M[r][c] / M[c][c]
+                M[r] = [a - f * b for a, b in zip(M[r], M[c])]
+    return [M[i][n] / M[i][i] if abs(M[i][i]) > 1e-12 else 0.0 for i in range(n)]
+
+
+def _model(exs):
+    raw = [_features(r) for r, _, _ in exs]
+    mean = [sum(c) / len(c) for c in zip(*raw)]
+    sd = [max(1e-6, (sum((v - m) ** 2 for v in c) / len(c)) ** 0.5) for c, m in zip(zip(*raw), mean)]
+    X = [[1.0] + [(v - m) / s for v, m, s in zip(x, mean, sd)] for x in raw]
+    return {"w": _fit(X, [1.0 if h else 0.0 for _, h, _ in exs]), "mean": mean, "sd": sd}
+
+
+def _prob(model, r):
+    x = [1.0] + [(v - m) / s for v, m, s in zip(_features(r), model["mean"], model["sd"])]
+    return 1 / (1 + math.exp(-max(-30, min(30, sum(a * b for a, b in zip(model["w"], x))))))
+
+
+def _label(p):
+    return "likely" if p >= 0.7 else "unlikely" if p <= 0.3 else ""
+
+
+_learned = {}
+
+
+def learn():
+    """What past weeks say: how the rules have done, hold-over rates, and a fitted model if it earns its place."""
+    key = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (HISTORY, WEEKS))
+    if _learned.get("key") == key:
+        return _learned["value"]
+    exs = examples()
+    rules_right = sum(1 for r, held, _ in exs if guess(r)[0] == ("likely" if held else "unlikely"))
+    rules_sure = sum(1 for r, _, _ in exs if guess(r)[0])
+
+    def rate(pick):
+        sub = [h for r, h, _ in exs if pick(r)]
+        return [len(sub), sum(sub)]
+    trends = {
+        "weeks": [["weeks 1\u20132", rate(lambda r: (r.get("weeks") or 0) <= 2)],
+                  ["weeks 3\u20134", rate(lambda r: 3 <= (r.get("weeks") or 0) <= 4)],
+                  ["week 5+", rate(lambda r: (r.get("weeks") or 0) >= 5)]],
+        "avg": [["under $1,000 a theater", rate(lambda r: (r.get("avg") or 0) < 1000)],
+                ["$1,000\u20133,000", rate(lambda r: 1000 <= (r.get("avg") or 0) < 3000)],
+                ["$3,000+", rate(lambda r: (r.get("avg") or 0) >= 3000)]],
+    }
+    value = {"examples": len(exs), "weekends": len({f for _, _, f in exs}), "held": sum(h for _, h, _ in exs),
+             "rulesRight": rules_right, "rulesSure": rules_sure, "trends": trends, "model": None}
+    held = value["held"]
+    if len(exs) >= MIN_EXAMPLES and min(held, len(exs) - held) >= 5:
+        # Test on whole weekends left out, so one big week can't flatter it.
+        right = sure = 0
+        for fri in {f for _, _, f in exs}:
+            m = _model([e for e in exs if e[2] != fri])
+            for r, h, f in exs:
+                if f == fri:
+                    lab = _label(_prob(m, r))
+                    sure += bool(lab)
+                    right += lab == ("likely" if h else "unlikely")
+        value["modelRight"], value["modelSure"] = right, sure
+        if right > rules_right:
+            value["model"] = _model(exs)
+    _learned.update(key=key, value=value)
+    return value
+
+
+def hint(r):
+    """guess(), from the fitted model once there is one."""
+    m = learn().get("model")
+    if m and not r.get("reissue"):
+        p = _prob(m, r)
+        return _label(p), f"{round(p * 100)}% chance by the pattern in past weeks"
+    return guess(r)

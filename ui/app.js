@@ -93,13 +93,15 @@ function venueLinks(x){
 
 // A guess from the weekend box office you pasted, with its numbers on hover.
 const usd = v => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e4 ? `$${Math.round(v / 1e3)}K` : `$${Math.round(v).toLocaleString()}`;
-function boxTag(b){
+function boxTag(b, x){
   const nums = [`#${b.rank} last weekend`, usd(b.gross) + (b.change != null ? ` (${b.change > 0 ? "+" : ""}${Math.round(b.change)}%)` : "")]
     .concat(b.theaters ? [`${b.theaters.toLocaleString()} theaters` + (b.thChange ? ` (${b.thChange > 0 ? "+" : ""}${b.thChange.toLocaleString()})` : "")] : [])
     .concat(b.avg ? [`${usd(b.avg)} per theater`] : [])
     .concat(b.weeks ? [`week ${b.weeks}`] : []).join(" \u00b7 ");
   const why = b.why ? ` \u2014 ${b.why}` : "";
-  const title = `${nums}${why}. A guess from the box office you pasted; Wednesday's newsletter will say for sure.`;
+  const plus = (d, n) => { const t = new Date(d + "T12:00"); t.setDate(t.getDate() + n); return t.toLocaleDateString("en-CA"); };
+  const target = x ? ` Will it be in the newsletter out ~${shortDate(x.end)}, for ${shortDate(plus(x.end, 1))}\u2013${shortDate(plus(x.end, 7))}?` : "";
+  const title = `${nums}${why}.${target} A guess from last weekend's box office; that newsletter will say for sure.`;
   const label = b.hint === "likely" ? "next week: likely" : b.hint === "unlikely" ? "next week: unlikely" : "next week ?";
   return `<span class="tag ${b.hint}" title="${title.replace(/"/g, "&quot;")}">${label}</span>`;
 }
@@ -156,7 +158,7 @@ function renderMadison(){
       else if (!x.allWeek && (x.days || []).length)
         carry = `<span class="tag" title="its screenings are all this week">\u2717 not next week</span>`;
       else if (x.box)
-        carry = boxTag(x.box);
+        carry = boxTag(x.box, x);
       else
         carry = `<span class="tag" title="not in next week's preview, which only lists what's new; Wednesday's newsletter will say if it continues">next week ?</span>`;
     } else if (MAD.showing === "soon" && !MAD.now.has(x.slug)) {

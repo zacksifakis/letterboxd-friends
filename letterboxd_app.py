@@ -1021,7 +1021,9 @@ def madison_listings():
     # The weekend box office you pasted, matched to this week's films: a hint
     # for whether a run carries on when the newsletter's preview can't say.
     import letterboxd_boxoffice as bo
-    chart = bo.load()
+    # Only the weekend inside this week counts: its numbers (out Monday) are
+    # what the newsletter at the end of this week decides the next week on.
+    chart = bo.load(now_wk) if now_wk else None
     for item in now.values():
         r = bo.match(chart["rows"], item["title"]) if chart else None
         if r:

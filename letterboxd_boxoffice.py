@@ -238,16 +238,22 @@ def save(text):
     return newest[2], [c[0] for c in charts]
 
 
-def load():
-    """The pasted chart's rows, if it's recent enough to use."""
+def load(week=None):
+    """The pasted chart, if it's for the weekend inside `week` (start, end): that
+    weekend, charted on Monday, is what the newsletter at the end of the week
+    decides on. Without a week, any chart pasted in the last few days."""
     try:
         with open(CACHE) as f:
             d = json.load(f)
     except Exception:
         return None
-    if not d.get("rows") or time.time() - d.get("at", 0) > KEEP_DAYS * 86400:
+    if not d.get("rows"):
         return None
-    return d
+    fri = friday(d.get("weekend", ""), datetime.date.fromtimestamp(d.get("at", 0)))
+    d["friday"] = fri
+    if week:
+        return d if week[0].isoformat() <= fri <= week[1].isoformat() else None
+    return d if time.time() - d.get("at", 0) <= KEEP_DAYS * 86400 else None
 
 
 # ------------------------------------------------- learning from past weeks

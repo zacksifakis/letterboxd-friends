@@ -165,10 +165,10 @@ function renderMadison(){
     } else if (MAD.showing === "soon" && !MAD.now.has(x.slug)) {
       carry = `<span class="tag week" title="not playing this week">new</span>`;
     }
-    return `<div class="mad${x === top ? " top" : ""}"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
+    return `<div class="mad${medalClass(top.get(x))}"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
       + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
       + `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
-      + hitStats(x) + (x === top ? TOP_TAG : "")
+      + hitStats(x) + medalTag(top.get(x))
       + (x.section ? `<span class="tag">${x.section}</span>` : "")
       + when + carry
       + (x.note ? `<span class="tag">${x.note}</span>` : "") + `</div>`
@@ -264,10 +264,10 @@ async function loadRising(days){
     const img = POSTERS.has(x.slug)
       ? `<img src="/poster/${encodeURIComponent(x.slug)}.jpg" alt="" loading="lazy">`
       : '<span class="noimg"></span>';
-    return `<div class="rise${x === top ? " top" : ""}">${img}<span class="up">+${x.delta}</span>`
+    return `<div class="rise${medalClass(top.get(x))}">${img}<span class="up">+${x.delta}</span>`
       + `<span class="t"><a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
       + (x.isNew ? '<span class="new">NEW</span>' : "")
-      + `<span class="where"> ${x.year || ""}</span>${hitStats(x)}${x === top ? TOP_TAG : ""}</span>`
+      + `<span class="where"> ${x.year || ""}</span>${hitStats(x)}${medalTag(top.get(x))}</span>`
       + `<span class="where">${x.count} seats · ${x.period}</span></div>`;
   }).join("");
   $("riseMore").textContent = d.rows.length > 8 ? (riseAll ? "show fewer" : `show all ${d.rows.length}`) : "";
@@ -693,22 +693,22 @@ async function doSearch(){
 
 // Friends' average and liked share beside a search result, when the list it
 // came from has them.
-// The highest-rated film in a list, by the people you follow: only films with
-// 10+ ratings count (fewer says little), ties go to the one more people rated.
+// The three highest-rated films in a list, by the people you follow, as a Map
+// film -> 1, 2, 3 (gold, silver, bronze). Only films with 10+ ratings count
+// (fewer says little); ties go to the one more people rated.
 function topRated(list){
-  let best = null;
-  for (const x of list)
-    if (x.rating != null && (x.ratings || 0) >= 10
-        && (!best || x.rating > best.rating || (x.rating === best.rating && x.ratings > best.ratings)))
-      best = x;
-  return best;
+  const ranked = list.filter(x => x.rating != null && (x.ratings || 0) >= 10)
+    .sort((a, b) => b.rating - a.rating || b.ratings - a.ratings).slice(0, 3);
+  return new Map(ranked.map((x, i) => [x, i + 1]));
 }
-const TOP_TAG = '<span class="tag top" title="the highest rated in this list by the people you follow (10+ ratings)">\u2605 highest rated</span>';
+const MEDAL = ["", "gold", "silver", "bronze"];
+const medalTag = n => n ? `<span class="tag medal ${MEDAL[n]}" title="${["", "highest", "2nd highest", "3rd highest"][n]} rated in this list by the people you follow (10+ ratings)">\u2605 ${["", "1st", "2nd", "3rd"][n]}</span>` : "";
+const medalClass = n => n ? ` medal ${MEDAL[n]}` : "";
 
-// Show the first n, plus the top-rated film if it would otherwise be cut off.
+// Show the first n, plus any medal films that would otherwise be cut off.
 function withTop(list, n, top){
   const out = list.slice(0, n);
-  if (top && !out.includes(top)) out.push(top);
+  for (const x of top.keys()) if (!out.includes(x)) out.push(x);
   return out;
 }
 
@@ -781,9 +781,9 @@ async function findPageFilms(){
       const name = x.slug
         ? `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
         : `<a href="https://www.imdb.com/title/${x.imdb}/" target="_blank" rel="noopener">${x.title}</a>`;
-      return `<div class="mad${x === top ? " top" : ""}"><span class="mseats ${x.seats ? "" : "none"}">${x.seats || "\u2014"}</span>`
+      return `<div class="mad${medalClass(top.get(x))}"><span class="mseats ${x.seats ? "" : "none"}">${x.seats || "\u2014"}</span>`
         + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
-        + `${name} <span class="muted">${x.year || ""}</span>${hitStats(x)}${x === top ? TOP_TAG : ""}`
+        + `${name} <span class="muted">${x.year || ""}</span>${hitStats(x)}${medalTag(top.get(x))}`
         + (x.text ? `<span class="tag" title="as written on the page">${x.text}</span>` : "")
         + (x.checked ? `<span class="tag today" title="${x.how.startsWith("corrected") || x.how.startsWith("found") ? x.how : "confirmed by " + x.checked}">\u2713 ${x.checked}</span>`
            : x.how === "spelled in Greek" ? `<span class="tag" title="matched by sound — check it">\u2248</span>` : "")

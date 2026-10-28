@@ -119,6 +119,9 @@
   .mad{display:grid;grid-template-columns:44px minmax(0,1fr);gap:12px;align-items:baseline;
        padding:7px 0;border-bottom:1px solid #232a31}
   .mad:last-child{border-bottom:0}
+  .mad.top,.rise.top{background:linear-gradient(90deg,rgba(255,200,60,.10),transparent 70%);
+       box-shadow:inset 3px 0 0 #ffc83c;padding-left:6px;margin-left:-6px;border-radius:3px}
+  .tag.top{color:#ffc83c;border-color:rgba(255,200,60,.55)}
   .mseats{font-family:ui-monospace,Menlo,monospace;font-weight:700;text-align:right;color:var(--text)}
   .mseats.none{color:var(--dim);font-weight:400}
   .mt a{color:var(--text);text-decoration:none}

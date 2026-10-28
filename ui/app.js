@@ -139,7 +139,8 @@ function renderMadison(){
     + days.map(d => btn(d, d === t ? "Today" : shortDay(d), list.filter(x => playsOn(x, d)).length)).join("")
     + (list.some(x => x.allWeek) ? btn("week", "All week", list.filter(x => x.allWeek).length) : "");
   $("madWhenRow").hidden = !list.length;
-  const shown = MAD.all ? filtered : filtered.slice(0, 10);
+  const top = topRated(filtered);
+  const shown = MAD.all ? filtered : withTop(filtered, 10, top);
   $("madList").innerHTML = shown.map(x => {
     const seen = SEEN.has(x.slug);
     const dayTag = d => `<span class="tag day${d === t ? " is-today" : ""}">${d === t ? "today" : shortDay(d)}</span>`;
@@ -164,10 +165,10 @@ function renderMadison(){
     } else if (MAD.showing === "soon" && !MAD.now.has(x.slug)) {
       carry = `<span class="tag week" title="not playing this week">new</span>`;
     }
-    return `<div class="mad"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
+    return `<div class="mad${x === top ? " top" : ""}"><span class="mseats ${x.seats ? "" : "none"}" title="${x.seats ? `seen by ${x.seats} people you follow (${x.seatsIn})` : "not in any list you've scraped"}">${x.seats || "\u2014"}</span>`
       + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
       + `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
-      + hitStats(x)
+      + hitStats(x) + (x === top ? TOP_TAG : "")
       + (x.section ? `<span class="tag">${x.section}</span>` : "")
       + when + carry
       + (x.note ? `<span class="tag">${x.note}</span>` : "") + `</div>`
@@ -252,7 +253,8 @@ async function loadRising(days){
   if (days) { riseDays = days; riseAll = false; }
   let d;
   try { d = await (await fetch(`/api/rising?days=${riseDays}`)).json(); } catch (e) { return; }
-  const rows = riseAll ? d.rows : d.rows.slice(0, 8);
+  const top = topRated(d.rows);
+  const rows = riseAll ? d.rows : withTop(d.rows, 8, top);
   document.querySelectorAll("#riseSince button").forEach(b =>
     b.classList.toggle("on", +b.dataset.days === riseDays));
   $("riseMeta").textContent = d.rows.length
@@ -262,10 +264,10 @@ async function loadRising(days){
     const img = POSTERS.has(x.slug)
       ? `<img src="/poster/${encodeURIComponent(x.slug)}.jpg" alt="" loading="lazy">`
       : '<span class="noimg"></span>';
-    return `<div class="rise">${img}<span class="up">+${x.delta}</span>`
+    return `<div class="rise${x === top ? " top" : ""}">${img}<span class="up">+${x.delta}</span>`
       + `<span class="t"><a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
       + (x.isNew ? '<span class="new">NEW</span>' : "")
-      + `<span class="where"> ${x.year || ""}</span>${hitStats(x)}</span>`
+      + `<span class="where"> ${x.year || ""}</span>${hitStats(x)}${x === top ? TOP_TAG : ""}</span>`
       + `<span class="where">${x.count} seats · ${x.period}</span></div>`;
   }).join("");
   $("riseMore").textContent = d.rows.length > 8 ? (riseAll ? "show fewer" : `show all ${d.rows.length}`) : "";
@@ -691,6 +693,25 @@ async function doSearch(){
 
 // Friends' average and liked share beside a search result, when the list it
 // came from has them.
+// The highest-rated film in a list, by the people you follow: only films with
+// 10+ ratings count (fewer says little), ties go to the one more people rated.
+function topRated(list){
+  let best = null;
+  for (const x of list)
+    if (x.rating != null && (x.ratings || 0) >= 10
+        && (!best || x.rating > best.rating || (x.rating === best.rating && x.ratings > best.ratings)))
+      best = x;
+  return best;
+}
+const TOP_TAG = '<span class="tag top" title="the highest rated in this list by the people you follow (10+ ratings)">\u2605 highest rated</span>';
+
+// Show the first n, plus the top-rated film if it would otherwise be cut off.
+function withTop(list, n, top){
+  const out = list.slice(0, n);
+  if (top && !out.includes(top)) out.push(top);
+  return out;
+}
+
 function hitStats(h){
   if (h.rating == null && h.liked == null) return "";
   // Like the main list: under 10 ratings the average says little, so it's greyed out.
@@ -754,14 +775,15 @@ async function findPageFilms(){
     const res = await fetch("/api/page?url=" + encodeURIComponent(url));
     const d = await res.json();
     if (!res.ok) { $("pageOut").innerHTML = `<div class="muted">${d.error}</div>`; return; }
+    const top = topRated(d.films);
     const row = x => {
       const seen = x.slug && SEEN.has(x.slug);
       const name = x.slug
         ? `<a href="https://letterboxd.com/film/${x.slug}/" target="_blank" rel="noopener">${x.title}</a>`
         : `<a href="https://www.imdb.com/title/${x.imdb}/" target="_blank" rel="noopener">${x.title}</a>`;
-      return `<div class="mad"><span class="mseats ${x.seats ? "" : "none"}">${x.seats || "\u2014"}</span>`
+      return `<div class="mad${x === top ? " top" : ""}"><span class="mseats ${x.seats ? "" : "none"}">${x.seats || "\u2014"}</span>`
         + `<div><div class="mt">${seen ? '<span class="tick" title="You have seen this">&#10003;</span>' : ""}`
-        + `${name} <span class="muted">${x.year || ""}</span>${hitStats(x)}`
+        + `${name} <span class="muted">${x.year || ""}</span>${hitStats(x)}${x === top ? TOP_TAG : ""}`
         + (x.text ? `<span class="tag" title="as written on the page">${x.text}</span>` : "")
         + (x.checked ? `<span class="tag today" title="${x.how.startsWith("corrected") || x.how.startsWith("found") ? x.how : "confirmed by " + x.checked}">\u2713 ${x.checked}</span>`
            : x.how === "spelled in Greek" ? `<span class="tag" title="matched by sound — check it">\u2248</span>` : "")

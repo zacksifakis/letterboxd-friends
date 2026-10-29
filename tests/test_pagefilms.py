@@ -53,6 +53,17 @@ class PastedList(unittest.TestCase):
                          [("Psycho", "1960"), ("Clayface", None), ("The Substance", "2024"),
                           ("Aftersun", None), ("In the Mood for Love", "2000"), ("1917", None)])
 
+    def test_numbered_without_dots(self):
+        items = pf.list_items("# Movie\n1 Avengers: Doomsday\n2 Dune: Part Three\n3 Motor City\n4 Clayface")
+        self.assertEqual([t for t, _, _ in items], ["Avengers: Doomsday", "Dune: Part Three", "Motor City", "Clayface"])
+        # Not numbered: titles that start with a number keep it.
+        items = pf.list_items("1917\n28 Years Later\n12 Angry Men")
+        self.assertEqual([t for t, _, _ in items], ["1917", "28 Years Later", "12 Angry Men"])
+
+    def test_table_rows(self):
+        items = pf.list_items("Rank\tTitle\tYear\n1\tPsycho\t1960\n2\tAftersun\t2022\n3\tClayface\t2026")
+        self.assertEqual([(t, y) for t, y, _ in items], [("Psycho", "1960"), ("Aftersun", "2022"), ("Clayface", "2026")])
+
     def test_one_line(self):
         self.assertEqual([t for t, _, _ in pf.list_items("Past Lives, Aftersun, Lady Bird")],
                          ["Past Lives", "Aftersun", "Lady Bird"])

@@ -492,9 +492,25 @@ def list_items(text):
             if len(parts) >= 3 or (sep.startswith(r"\s*;") and len(parts) >= 2):
                 lines = parts
                 break
+    # A header row ("# Movie", "Rank  Title  Year") isn't a film.
+    header = {"#", "no", "rank", "movie", "movies", "title", "titles", "film", "films", "name", "year", "release"}
+    lines = [l for l in lines if not set(re.findall(r"[#\w]+", l.lower().replace("#", " # "))) <= header]
+    # Numbered without a dot ("1 Avengers: Doomsday", "2 Dune: Part Three"): strip
+    # the numbers only when they run 1, 2, 3 … down the list, so "1917" or
+    # "28 Years Later" in an unnumbered list keep theirs.
+    lead = [re.match(r"\s*(\d{1,3})(?:[.)]|\t|\s)\s*(?=\S)", l) for l in lines]
+    nums = [int(m.group(1)) for m in lead if m]
+    counted = len(lines) >= 3 and len(nums) >= 0.8 * len(lines) and \
+        sum(1 for a, b in zip(nums, nums[1:]) if b == a + 1) >= 0.7 * (len(nums) - 1)
     out = []
-    for raw in lines:
-        line = _RATING.sub("", _BULLET.sub("", raw)).strip()
+    for raw, m in zip(lines, lead):
+        line = raw[m.end():] if counted and m else raw
+        if "\t" in line:                     # a table row: the title cell, and a year cell if there is one
+            cells = [c.strip() for c in line.split("\t") if c.strip()]
+            words = [c for c in cells if re.search(r"[^\W\d_]{2}", c)]
+            yr = next((c for c in cells if re.fullmatch(r"(?:18|19|20)\d\d", c)), None)
+            line = (words[0] if words else line) + (f" ({yr})" if yr else "")
+        line = _RATING.sub("", _BULLET.sub("", line)).strip()
         m = _TAIL_YEAR.search(line)
         year = next((g for g in m.groups() if g), None) if m else None
         title = line[:m.start()].strip(" -–—,|") if m else line
@@ -503,8 +519,10 @@ def list_items(text):
     return out
 
 
-def _by_title(title, year, ix):
-    """A film in your own lists with exactly this title (and year, if given)."""
+def _by_title(title, year, ix, recent=False):
+    """A film in your own lists with exactly this title (and year, if given).
+    With no year: the newest version if the list is of current films (`recent`),
+    else the one most friends saw."""
     films = ix["films"]
     hit = ix["by_title"].get(norm(title))
     if not hit:
@@ -513,7 +531,26 @@ def _by_title(title, year, ix):
         near = [c for c in hit if c in films and films[c][1].isdigit() and abs(int(films[c][1]) - int(year)) <= 1]
         return _pick(near, films, year) if near else None
     known = [c for c in hit if c in films]
-    return max(known, key=lambda c: films[c][2]) if known else hit[0]   # no year: the one most friends saw
+    if recent:
+        new = [c for c in known if _recent(c, films, 1)]
+        if new:
+            return max(new, key=lambda c: films[c][1])
+    return max(known, key=lambda c: films[c][2]) if known else hit[0]
+
+
+def _mostly_recent(items, ix):
+    """Is this a list of current films? Judged by the titles that name only one film."""
+    films, n, new = ix["films"], 0, 0
+    for title, year, _ in items:
+        if year:
+            n += 1
+            new += year.isdigit() and int(year) >= time.localtime().tm_year - 1
+            continue
+        known = [c for c in ix["by_title"].get(norm(title), []) if c in films]
+        if len(set(known)) == 1:
+            n += 1
+            new += _recent(known[0], films, 1)
+    return n >= 3 and new >= 0.6 * n
 
 
 def films_in_text(text, limit=200, searches=60):
@@ -525,24 +562,38 @@ def films_in_text(text, limit=200, searches=60):
     for tt in re.findall(r"imdb\.com/title/(tt\d+)", text):
         key = ix["tt2slug"].get(tt, "imdb:" + tt)
         found.setdefault(key, {"key": key, "how": "IMDb link", "text": "", "times": []})
-    for title, year, raw in list_items(text)[:limit]:
+    items = list_items(text)[:limit]
+    recent = _mostly_recent(items, ix)
+    for title, year, raw in items:
         if re.search(r"https?://|www\.", raw):
             continue
-        whole = _BULLET.sub("", raw).strip()
+        whole = re.sub(r"^\s*\d{1,3}(?:[.)]|\t|\s)\s*", "", raw) if not re.match(r"\s*\d", title) else raw
+        whole = _BULLET.sub("", whole).strip()
+        # "Fjord (Φιόρδ)", "Monster Mia (Τερατο-Μία)": a second title in brackets.
+        alt = re.match(r"(.+?)\s*\(([^()]*[^\W\d_][^()]*)\)\s*$", title)
+        names = [title] + ([alt.group(1), alt.group(2)] if alt else [])
         # "Blade Runner 2049" is a title, not Blade Runner from 2049: try the line whole first.
-        slug = _by_title(whole, None, ix) if whole != title else None
+        slug = _by_title(whole, None, ix, recent) if whole != title else None
         if slug:
             title = whole
-        else:
-            slug = _by_title(title, year, ix)
+        for name in names:
+            slug = slug or _by_title(name, year, ix, recent)
         how = "title"
-        if not slug:
-            hit = match_line(title, ix, True, year)
-            slug, how = hit if hit else (None, "")
-        if not slug and searched < searches:
+        for name in names:
+            if not slug:
+                hit = match_line(name, ix, True, year)
+                slug, how = hit if hit else (None, "")
+        for name in names[-2:] if alt else names:
+            if slug or searched >= searches:
+                break
             searched += 1
-            got = letterboxd_search(title, year, any_year=not year) or \
-                (letterboxd_search(whole, None, any_year=True) if whole != title else None)
+            got = letterboxd_search(name, year, any_year=not year)
+            if got:
+                SEARCHED[got[0]] = got
+                slug, how = got[0], "Letterboxd search"
+        if not slug and whole != title and searched < searches:
+            searched += 1
+            got = letterboxd_search(whole, None, any_year=True)
             if got:
                 SEARCHED[got[0]] = got
                 slug, how = got[0], "Letterboxd search"

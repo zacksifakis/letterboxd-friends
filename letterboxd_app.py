@@ -623,6 +623,10 @@ def lists_with(slug):
 # newsletter's writing is stored, and each entry links back to its report.
 MADISON = os.path.join(HOME, ".letterboxd_cache", "madison.json")
 MADISON_FEED = "https://horizonlinemadison.substack.com/feed"
+# Your own corrections to the newsletter, kept apart so a refresh can't undo
+# them: {"slug@week start": ["10/30-11/2 at AMC", ...]} replaces that film's
+# venues for that week only.
+MADISON_FIXES = os.path.join(HOME, ".letterboxd_cache", "madison_fixes.json")
 madison_job = {"running": False, "error": ""}
 
 
@@ -956,6 +960,17 @@ def madison_listings():
         wk = (e["start"], e["end"])
         newest[wk] = max(newest.get(wk, datetime.date.min), issue_date(e))
     entries = [e for e in entries if issue_date(e) == newest[(e["start"], e["end"])]]
+    try:
+        with open(MADISON_FIXES) as f:
+            fixes = json.load(f)
+    except Exception:
+        fixes = {}
+    for i, e in enumerate(entries):
+        venues = fixes.get(f'{e["slug"]}@{e["start"]}')
+        if venues is not None:
+            # Keep each venue's link when the corrected line still names it.
+            links = {v: h for v in venues for name, h in (e.get("links") or {}).items() if name in v}
+            entries[i] = {**e, "venues": venues, "links": links}
     weeks = sorted({(datetime.date.fromisoformat(e["start"]), datetime.date.fromisoformat(e["end"]))
                     for e in entries})
     now_wk = next((w for w in weeks if w[0] <= today <= w[1]), None)
@@ -975,6 +990,17 @@ def madison_listings():
             """Each screening in a venue line as a datetime: "9:15p 10/9" is
             21:15 on Oct 9; a date with no time counts until the end of the day."""
             out = []
+            # "10/30-11/2" is every day from the first date to the second.
+            for a, b in re.findall(r"\b(\d{1,2}/\d{1,2})\s*[-\u2013]\s*(\d{1,2}/\d{1,2})\b", v):
+                try:
+                    d0, d1 = (datetime.date(start.year, *map(int, x.split("/"))) for x in (a, b))
+                    if d1 < d0:
+                        d1 = d1.replace(year=d1.year + 1)
+                    out += [datetime.datetime.combine(d0 + datetime.timedelta(days=k), datetime.time(23, 59))
+                            for k in range((d1 - d0).days + 1)]
+                except ValueError:
+                    pass
+                v = v.replace(a, "", 1).replace(b, "", 1)
             for hh, mm, ap, mo, dy in re.findall(
                     r"(?:\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m?\.?\s+)?\b(\d{1,2})/(\d{1,2})\b", v, re.I):
                 try:

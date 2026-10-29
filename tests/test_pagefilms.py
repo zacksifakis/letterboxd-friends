@@ -44,5 +44,20 @@ class Matching(unittest.TestCase):
         self.assertIsNone(pf.match_line("(Ντοκιμαντέρ)", IX))
 
 
+
+class PastedList(unittest.TestCase):
+    def test_list_items(self):
+        items = pf.list_items("1. Psycho (1960)\n- Clayface\n\u2022 The Substance, 2024\n"
+                              "Aftersun \u2605\u2605\u2605\u2605\u00bd\nIn the Mood for Love 2000\n1917")
+        self.assertEqual([(t, y) for t, y, _ in items],
+                         [("Psycho", "1960"), ("Clayface", None), ("The Substance", "2024"),
+                          ("Aftersun", None), ("In the Mood for Love", "2000"), ("1917", None)])
+
+    def test_one_line(self):
+        self.assertEqual([t for t, _, _ in pf.list_items("Past Lives, Aftersun, Lady Bird")],
+                         ["Past Lives", "Aftersun", "Lady Bird"])
+        self.assertEqual([t for t, _, _ in pf.list_items("Clayface; Wicker")], ["Clayface", "Wicker"])
+        self.assertEqual(pf.list_items("Psycho, 1960")[0][:2], ("Psycho", "1960"))      # a year, not a second film
+
 if __name__ == "__main__":
     unittest.main()

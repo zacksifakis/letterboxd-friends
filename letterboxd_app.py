@@ -1046,10 +1046,10 @@ def madison_listings():
 IMDB_LB = os.path.join(HOME, ".letterboxd_cache", "imdb_to_letterboxd.json")     # tt -> [slug, title, year]
 
 
-def page_films(url):
-    """The films on a web page, ranked by how many people you follow have seen them."""
+def page_films(url="", text=""):
+    """The films on a web page, or in a pasted list, ranked by how many people you follow have seen them."""
     import letterboxd_pagefilms as pf
-    res = pf.films_on(url)
+    res = pf.films_in_text(text) if text else pf.films_on(url)
     films = pf.index()["films"]
     best, stats = best_and_stats()
     try:
@@ -1531,6 +1531,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "couldn't find a weekend chart in that — "
                                                  "copy the table rows with their dollar figures"})
             return self._send(200, {"rows": len(rows), "weekends": weekends})
+
+        if u.path == "/api/pagetext":            # a pasted list of films
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                text = str(json.loads(self.rfile.read(n) or b"{}").get("text", ""))[:100_000]
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "bad json"})
+            if not text.strip():
+                return self._send(400, {"error": "paste some film titles, one per line"})
+            try:
+                return self._send(200, page_films(text=text))
+            except Exception as e:
+                return self._send(502, {"error": f"couldn't read that list: {e}"})
 
         if u.path == "/api/quit":
             self._send(200, {"bye": True})

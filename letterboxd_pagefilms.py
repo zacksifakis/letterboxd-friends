@@ -472,6 +472,88 @@ def films_on(url, limit=150, cross_check=True):
 
 
 _searches = {}
+# ------------------------------------------------- a pasted list of films
+
+_BULLET = re.compile(r"^\s*(?:\d{1,3}[.)]\s+|#\d{1,3}\s+|[-–—•*·▪►✓]\s*)")
+_TAIL_YEAR = re.compile(r"\s*(?:\((\d{4})\)|[,\-–—|]\s*((?:18|19|20)\d\d)|\s((?:18|19|20)\d\d))\s*$")
+_RATING = re.compile(r"\s*(?:[★☆½]+|\d(?:\.\d)?\s*/\s*(?:5|10)|\d(?:\.\d)?\s*★)\s*$")
+
+
+def list_items(text):
+    """[(title, year or None, the line as pasted)] from a pasted list: one film a
+    line, numbered or bulleted, with or without a year ("Psycho (1960)",
+    "Psycho 1960", "Psycho, 1960"); a single line of several films can be split
+    by semicolons, slashes or commas."""
+    lines = [l.strip() for l in text.replace("\r", "").split("\n") if l.strip()]
+    if len(lines) <= 2:
+        joined = " ; ".join(lines)
+        for sep in (r"\s*;\s*", r"\s+/\s+|\s*\|\s*", r"\s*,\s*(?!(?:18|19|20)\d\d\b)"):
+            parts = [x for x in re.split(sep, joined) if x.strip()]
+            if len(parts) >= 3 or (sep.startswith(r"\s*;") and len(parts) >= 2):
+                lines = parts
+                break
+    out = []
+    for raw in lines:
+        line = _RATING.sub("", _BULLET.sub("", raw)).strip()
+        m = _TAIL_YEAR.search(line)
+        year = next((g for g in m.groups() if g), None) if m else None
+        title = line[:m.start()].strip(" -–—,|") if m else line
+        if title:
+            out.append((title, year, raw))
+    return out
+
+
+def _by_title(title, year, ix):
+    """A film in your own lists with exactly this title (and year, if given)."""
+    films = ix["films"]
+    hit = ix["by_title"].get(norm(title))
+    if not hit:
+        return None
+    if year:
+        near = [c for c in hit if c in films and films[c][1].isdigit() and abs(int(films[c][1]) - int(year)) <= 1]
+        return _pick(near, films, year) if near else None
+    known = [c for c in hit if c in films]
+    return max(known, key=lambda c: films[c][2]) if known else hit[0]   # no year: the one most friends saw
+
+
+def films_in_text(text, limit=200, searches=60):
+    """The films in a pasted list, in the shape films_on() returns."""
+    ix = index()
+    found, unmatched, searched = {}, [], 0
+    for slug in re.findall(r"letterboxd\.com/(?:[\w-]+/)?film/([a-z0-9-]+)", text):
+        found.setdefault(slug, {"key": slug, "how": "Letterboxd link", "text": "", "times": []})
+    for tt in re.findall(r"imdb\.com/title/(tt\d+)", text):
+        key = ix["tt2slug"].get(tt, "imdb:" + tt)
+        found.setdefault(key, {"key": key, "how": "IMDb link", "text": "", "times": []})
+    for title, year, raw in list_items(text)[:limit]:
+        if re.search(r"https?://|www\.", raw):
+            continue
+        whole = _BULLET.sub("", raw).strip()
+        # "Blade Runner 2049" is a title, not Blade Runner from 2049: try the line whole first.
+        slug = _by_title(whole, None, ix) if whole != title else None
+        if slug:
+            title = whole
+        else:
+            slug = _by_title(title, year, ix)
+        how = "title"
+        if not slug:
+            hit = match_line(title, ix, True, year)
+            slug, how = hit if hit else (None, "")
+        if not slug and searched < searches:
+            searched += 1
+            got = letterboxd_search(title, year, any_year=not year) or \
+                (letterboxd_search(whole, None, any_year=True) if whole != title else None)
+            if got:
+                SEARCHED[got[0]] = got
+                slug, how = got[0], "Letterboxd search"
+        if slug:
+            found.setdefault(slug, {"key": slug, "how": how, "text": title, "times": []})
+        else:
+            unmatched.append(title)
+    return {"url": "", "title": "your list", "films": list(found.values()), "links": {},
+            "unmatched": unmatched, "checkedWith": None}
+
+
 SEARCHED = {}          # slug -> (slug, title, year) for films found by search, for display
 
 

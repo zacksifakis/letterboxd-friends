@@ -765,14 +765,23 @@ document.addEventListener("keydown", e => {
 
 // Films on any web page (a cinema's programme, a festival lineup), ranked by
 // how many people you follow have seen them.
+// One web address is a page to read; anything else is a list of films.
+const isAddress = v => !/\n/.test(v) && /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(\/\S*)?$/i.test(v);
+
 async function findPageFilms(){
   const url = $("pageUrl").value.trim();
   if (!url) return;
-  try { localStorage.setItem("pageUrl", url); } catch (e) {}
+  const asList = !isAddress(url);
+  try { if (!asList) localStorage.setItem("pageUrl", url); } catch (e) {}
   $("pageGo").disabled = true;
-  $("pageOut").innerHTML = '<div class="muted">reading the page\u2026 (a big programme can take up to a minute)</div>';
+  $("pageOut").innerHTML = asList
+    ? '<div class="muted">looking up your list\u2026 (titles not in your lists are searched on Letterboxd, about a second each)</div>'
+    : '<div class="muted">reading the page\u2026 (a big programme can take up to a minute)</div>';
   try {
-    const res = await fetch("/api/page?url=" + encodeURIComponent(url));
+    const res = asList
+      ? await fetch("/api/pagetext", {method: "POST", headers: {"Content-Type": "application/json"},
+                                      body: JSON.stringify({text: url})})
+      : await fetch("/api/page?url=" + encodeURIComponent(url));
     const d = await res.json();
     if (!res.ok) { $("pageOut").innerHTML = `<div class="muted">${d.error}</div>`; return; }
     const top = topRated(d.films);
@@ -791,7 +800,8 @@ async function findPageFilms(){
         + `</div></div>`;
     };
     $("pageOut").innerHTML =
-        `<div class="muted" style="margin-bottom:6px">${d.films.length} films on <a href="${d.url}" target="_blank" rel="noopener">${d.title}</a>`
+        `<div class="muted" style="margin-bottom:6px">${d.films.length} films `
+      + (d.url ? `on <a href="${d.url}" target="_blank" rel="noopener">${d.title}</a>` : "in your list")
       + (d.checkedWith ? ` \u00b7 titles checked against <a href="${d.checkedWith}" target="_blank" rel="noopener">${new URL(d.checkedWith).hostname.replace("www.", "")}</a>` : "")
       + `</div>`
       + `<div class="madlist">${d.films.map(row).join("") || '<div class="muted">no films recognised on that page</div>'}</div>`
@@ -803,5 +813,14 @@ async function findPageFilms(){
   }
 }
 $("pageGo").onclick = findPageFilms;
-$("pageUrl").addEventListener("keydown", e => { if (e.key === "Enter") findPageFilms(); });
+// Enter finds films for a web address; a list needs its line breaks, so there
+// it's Cmd/Ctrl+Enter (or the button).
+$("pageUrl").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  if (e.metaKey || e.ctrlKey || isAddress($("pageUrl").value.trim())) { e.preventDefault(); findPageFilms(); }
+});
+$("pageUrl").addEventListener("input", () => {
+  const n = $("pageUrl").value.split("\n").length;
+  $("pageUrl").rows = Math.min(10, Math.max(1, n));
+});
 try { $("pageUrl").value = localStorage.getItem("pageUrl") || ""; } catch (e) {}

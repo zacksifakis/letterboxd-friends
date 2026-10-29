@@ -70,5 +70,15 @@ class PastedList(unittest.TestCase):
         self.assertEqual([t for t, _, _ in pf.list_items("Clayface; Wicker")], ["Clayface", "Wicker"])
         self.assertEqual(pf.list_items("Psycho, 1960")[0][:2], ("Psycho", "1960"))      # a year, not a second film
 
+
+class Showtimes(unittest.TestCase):
+    def test_greek_day_prefix(self):
+        # cinema-her.com writes "ΣαΚυ1630": 16:30 on Saturday and Sunday
+        for line in ["Τάλως ΠεΣαΚυ1710", "Τεχνόπολις Πε2100", "Κορνάρος 1800", "7:30 pm"]:
+            self.assertTrue(pf.TIME.search(line), line)
+        for line in ["Πε 22/10", "Τερατο-Μία", "tt1234567"]:
+            self.assertFalse(pf.TIME.search(line), line)
+
+
 if __name__ == "__main__":
     unittest.main()

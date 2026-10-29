@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.join(HOME, "Desktop"))
 
 UA = "letterboxd-friends (personal project)"
 BLOCK = r"</?(?:p|div|br|li|tr|td|th|h\d|section|article|dd|dt|table|ul|ol|header|footer)\b[^>]*>"
-TIME = re.compile(r"\b(?:[01]?\d|2[0-3])[:.]?[0-5]\d\b|\b\d{1,2}(?::\d\d)?\s*[ap]\.?m\b", re.I)
+# A time may have Greek day letters stuck to it: "ΣαΚυ1630" is 16:30 on Saturday and Sunday.
+TIME = re.compile(r"(?:\b|(?<=[Ͱ-Ͽ]))(?:[01]?\d|2[0-3])[:.]?[0-5]\d\b|\b\d{1,2}(?::\d\d)?\s*[ap]\.?m\b", re.I)
 GREEK = re.compile("[Ͱ-Ͽἀ-῿]")
 
 
@@ -88,7 +89,7 @@ def norm(s):
     return " ".join(re.findall(r"\w+", s))
 
 
-_GR = [("ου", "u"), ("ει", "i"), ("οι", "i"), ("υι", "i"), ("αι", "e"), ("αυ", "av"), ("ευ", "ev"),
+_GR = [("γι", "i"), ("ου", "u"), ("ει", "i"), ("οι", "i"), ("υι", "i"), ("αι", "e"), ("αυ", "av"), ("ευ", "ev"),
        ("ντ", "d"), ("μπ", "b"), ("γκ", "g"), ("γγ", "g"), ("τσ", "ts"), ("τζ", "dz")]
 _GR1 = dict(zip("αβγδεζηθικλμνξοπρστυφχψω", ["a", "v", "g", "d", "e", "z", "i", "th", "i", "k", "l", "m", "n",
                                             "ks", "o", "p", "r", "s", "t", "i", "f", "h", "ps", "o"]))
@@ -343,7 +344,7 @@ def films_on(url, limit=150, cross_check=True):
         add(ix["tt2slug"].get(tt, "imdb:" + tt), "IMDb link", "")
 
     lines = page_lines(page)
-    unmatched = []
+    unmatched, times_of = [], {}
     page_title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
     site_words = set(norm(htmlmod.unescape(page_title.group(1))).split()) if page_title else set()
     for i, line in enumerate(lines):
@@ -353,8 +354,16 @@ def films_on(url, limit=150, cross_check=True):
         # "(Švankmajer, 1992, 17 min.)" — gives the film's year.
         details = next((l for l in lines[i + 1:i + 3] if DETAILS.search(l)), None)
         year = re.search(r"\b(18\d\d|19\d\d|20\d\d)\b", details).group(1) if details else None
-        after = [l for l in nxt[:3] if TIME.search(l) and "©" not in l and l != details
-                 and not match_line(l, ix)][:3]
+        # The showtimes are the lines under the title, up to the first line
+        # that isn't one — usually the next film's title. A couple of other
+        # lines (a genre, a rating) may come before them.
+        after = []
+        for j, l in enumerate(nxt[:8]):
+            if TIME.search(l) and "©" not in l and l != details and not match_line(l, ix):
+                after.append(l)
+            elif after or j >= 2:
+                break
+        after = after[:6]
         listing = (bool(after) and bool(nxt) and nxt[0] in after) or bool(year)
         if any(upcoming(l) for l in [line] + after):
             continue                            # "coming soon": not playing yet, so left out
@@ -367,10 +376,11 @@ def films_on(url, limit=150, cross_check=True):
         if hit:
             add(hit[0], hit[1], COUNT.sub("", line).strip(), after)
         elif listing and not TIME.search(line) and not re.search(r"\d{3,4}\b", line) and 3 <= len(line) <= 60 \
-                and len(line.split()) <= 7 and not line.endswith(".") and not line.startswith("(") \
+                and len(line.split()) <= 10 and not line.endswith(".") and not line.startswith("(") \
                 and not re.search(r"www\.|https?:|cinema|\bpage\b", line, re.I) and not is_label(line) \
                 and not set(norm(line).split()) <= site_words:
             unmatched.append(line)              # looks like a programme entry we couldn't place
+            times_of[undated(line)] = after
         # Films named inside a paragraph: "…includes Food (Švankmajer, 1992, 17 min.), and
         # A Walk Through H (Greenaway, 1978, 41 min.)" — the title is what comes before
         # the brackets, back to the previous comma, "and" or "includes".
@@ -451,9 +461,11 @@ def films_on(url, limit=150, cross_check=True):
     unmatched = [u for u in dict.fromkeys(undated(u) for u in unmatched) if u not in placed]
     still = []
     for u in unmatched[:25]:
-        found_it = letterboxd_search(u)
+        found_it, how = letterboxd_search(u), "Letterboxd search"
+        if not found_it and GREEK.search(u):
+            found_it, how = greek_title_elsewhere(u)
         if found_it and found_it[0] not in found:
-            add(found_it[0], "Letterboxd search", u)
+            add(found_it[0], how, u, times_of.get(u))
             SEARCHED[found_it[0]] = found_it
         else:
             still.append(u)
@@ -462,7 +474,7 @@ def films_on(url, limit=150, cross_check=True):
     if cross_check:
         helper = CROSS_CHECK.get(site.replace("www.", ""))
         if helper:
-            unmatched = cross_checked(found, order, unmatched, helper, ix)
+            unmatched = cross_checked(found, order, unmatched, helper, ix, times_of)
 
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
     return {"url": url, "title": htmlmod.unescape(title.group(1).strip()) if title else url,
@@ -640,7 +652,7 @@ def letterboxd_search(title, year=None, any_year=False):
             same = same[:1]                     # Letterboxd's own best match
         else:
             this_year = time.localtime().tm_year
-            same = [d for d in same if d.get("releaseYear") and int(d["releaseYear"]) >= this_year - 1]
+            same = [d for d in same if d.get("releaseYear") and int(d["releaseYear"]) >= this_year - 2]
         if same:
             d = max(same, key=lambda d: d.get("releaseYear") or 0)
             m = re.search(r"/film/([a-z0-9-]+)/", d.get("url") or "")
@@ -700,6 +712,74 @@ def latin_name(greek_name):
     except Exception:
         pass
     return None
+
+
+def greek_title_elsewhere(text):
+    """
+    ((slug, title, year), how) for a Greek title Letterboxd doesn't know, or (None, None).
+    Wikidata often has the Greek title ("Τερατο-Μία" is Monster Mia) and the
+    film's Letterboxd ID or English title. A title that is an English one
+    spelled in Greek ("Δε Ινφλουένσερ Πρότζεκτ") is searched as it sounds.
+    Only recent films: a cinema's new titles are the ones Letterboxd lacks in Greek.
+    """
+    import requests
+    name = re.sub(r"\s+", " ", re.sub(r"\(.*?\)", " ", undated(text))).strip()
+    this_year = time.localtime().tm_year
+    try:
+        H = {"User-Agent": "168SeatsPersonalProject/1.0 (personal film list)"}
+        api = "https://www.wikidata.org/w/api.php"
+        hits = requests.get(api, headers=H, timeout=20, params={
+            "action": "wbsearchentities", "search": name, "language": "el", "uselang": "en",
+            "type": "item", "limit": 5, "format": "json"}).json().get("search", [])
+        ids = [h["id"] for h in hits]
+        ents = requests.get(api, headers=H, timeout=20, params={
+            "action": "wbgetentities", "ids": "|".join(ids), "props": "claims|labels|aliases",
+            "languages": "el|en", "format": "json"}).json().get("entities", {}) if ids else {}
+        for q in ids:
+            e = ents.get(q, {})
+            names = [e.get("labels", {}).get("el", {}).get("value", "")] + \
+                    [a["value"] for a in e.get("aliases", {}).get("el", [])]
+            if norm(name) not in {norm(n) for n in names if n}:
+                continue                          # found by a word or two, not by its title
+            claim = lambda p: [c["mainsnak"].get("datavalue", {}).get("value") for c in e.get("claims", {}).get(p, [])]
+            years = [v["time"][1:5] for v in claim("P577") if isinstance(v, dict) and v.get("time")]
+            year = min(years) if years else None
+            if not year or int(year) < this_year - 2:
+                continue
+            english = e.get("labels", {}).get("en", {}).get("value", "")
+            lb = [v for v in claim("P6127") if isinstance(v, str)]
+            if lb:
+                return (lb[0], english or name, year), "Wikidata"
+            if english:
+                hit = letterboxd_search(english, year)
+                if hit:
+                    return hit, "Wikidata"
+    except Exception:
+        pass
+    # English spelled in Greek: search by the longest words, keep a result that sounds the same.
+    def latin(w):                               # "Πρότζεκτ" → "projekt"
+        w = norm(w).replace("τζ", "j")
+        for a, b in _GR:
+            w = w.replace(a, b)
+        return "".join(_GR1.get(c, c) for c in w)
+    words = [latin(w) for w in re.findall(r"\w+", name) if len(w) >= 4 and norm(w) != "εναντιον"]
+    key = sounds(re.sub(r"\bεναντίον\b", "vs", name), True)
+    for q in dict.fromkeys([" ".join(words)] + sorted(words, key=len, reverse=True)[:1]):
+        if not q:
+            continue
+        try:
+            import letterboxd_net as net
+            r = net.session().get("https://letterboxd.com/s/autocompletefilm", params={"q": q, "limit": 10}, timeout=20)
+            for d in (r.json().get("data", []) if r.status_code == 200 else []):
+                y = d.get("releaseYear")
+                m = re.search(r"/film/([a-z0-9-]+)/", d.get("url") or "")
+                if m and y and int(y) >= this_year - 2 and \
+                        difflib.SequenceMatcher(None, key, sounds(d.get("name") or "", False)).ratio() >= 0.85:
+                    return (m.group(1), d.get("name"), str(y)), "spelled in Greek"
+        except Exception:
+            pass
+        time.sleep(0.7)
+    return None, None
 
 
 _pages = {}
@@ -822,7 +902,7 @@ def _lookup(helper, text):
     if close:
         return helper[close[0]]
     if GREEK.search(text):          # "Δε Ινφλουένσερ Πρότζεκτ" on one site, "The Influencer Project" on the other
-        key = sounds(re.sub(r"\(.*?\)", " ", undated(text)), True)
+        key = sounds(re.sub(r"\bεναντίον\b", "vs", re.sub(r"\(.*?\)", " ", undated(text))), True)
         best = max(((difflib.SequenceMatcher(None, key, sounds(h, False)).ratio(), h) for h in helper
                     if not GREEK.search(h) and len(h) >= 4), default=(0, None))
         if best[0] >= 0.85:
@@ -830,7 +910,7 @@ def _lookup(helper, text):
     return None
 
 
-def cross_checked(found, order, unmatched, helper_url, ix):
+def cross_checked(found, order, unmatched, helper_url, ix, times_of={}):
     """Confirm, correct or fill in the page's matches from the second site."""
     try:
         helper = helper_map(helper_url, ix)
@@ -859,7 +939,8 @@ def cross_checked(found, order, unmatched, helper_url, ix):
         h = _lookup(helper, text)
         slug = h["slug"] if h and h["slug"] else (by_director(h["href"], ix) if h and h["href"] else None)
         if slug and slug not in found:
-            found[slug] = {"key": slug, "how": f"found via {site}", "text": text, "times": [], "checked": site}
+            found[slug] = {"key": slug, "how": f"found via {site}", "text": text,
+                           "times": times_of.get(text, []), "checked": site}
             order.append(slug)
         elif not slug:
             still.append(text)

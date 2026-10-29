@@ -140,10 +140,7 @@ function renderMadison(){
     + (list.some(x => x.allWeek) ? btn("week", "All week", list.filter(x => x.allWeek).length) : "");
   $("madWhenRow").hidden = !list.length;
   const top = topRated(filtered);
-  // Picking a day means "what's on then": show all of it. The unfiltered
-  // list starts at the top 10.
-  const whole = MAD.all || MAD.when !== "any";
-  const shown = whole ? filtered : withTop(filtered, 10, top);
+  const shown = MAD.all ? filtered : withTop(filtered, 10, top);
   $("madList").innerHTML = shown.map(x => {
     const seen = SEEN.has(x.slug);
     const dayTag = d => `<span class="tag day${d === t ? " is-today" : ""}">${d === t ? "today" : shortDay(d)}</span>`;
@@ -180,8 +177,7 @@ function renderMadison(){
       + `</div></div></div>`;
   }).join("");
   if (!filtered.length) $("madList").innerHTML = '<div class="muted">nothing matching that this week</div>';
-  $("madMore").textContent = MAD.when !== "any" || filtered.length <= 10 ? ""
-    : (MAD.all ? "show fewer" : `show all ${filtered.length}`);
+  $("madMore").textContent = filtered.length > 10 ? (MAD.all ? "show fewer" : `show all ${filtered.length}`) : "";
   const other = MAD.showing === "now" ? d.soon.length : d.now.length;
   $("madToggle").textContent = other ? (MAD.showing === "now" ? `coming next week (${other})` : "back to this week") : "";
   const bx = d.boxoffice, L = d.learned;

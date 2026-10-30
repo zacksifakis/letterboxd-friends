@@ -625,7 +625,8 @@ MADISON = os.path.join(HOME, ".letterboxd_cache", "madison.json")
 MADISON_FEED = "https://horizonlinemadison.substack.com/feed"
 # Your own corrections to the newsletter, kept apart so a refresh can't undo
 # them: {"slug@week start": ["10/30-11/2 at AMC", ...]} replaces that film's
-# venues for that week only.
+# venues for that week only; {"slug@week start": {"title": ..., "venues": [...]}}
+# adds a film the newsletter left out.
 MADISON_FIXES = os.path.join(HOME, ".letterboxd_cache", "madison_fixes.json")
 madison_job = {"running": False, "error": ""}
 
@@ -965,8 +966,17 @@ def madison_listings():
             fixes = json.load(f)
     except Exception:
         fixes = {}
+    for key, fix in fixes.items():
+        slug, _, start = key.partition("@")
+        week = next((e for e in entries if e["start"] == start), None)
+        if isinstance(fix, dict) and week and not any(e["slug"] == slug and e["start"] == start for e in entries):
+            entries.append({**week, "slug": slug, "title": fix["title"], "section": fix.get("section", ""),
+                            "venues": fix["venues"], "links": fix.get("links", {}), "note": "",
+                            "added": True})
     for i, e in enumerate(entries):
         venues = fixes.get(f'{e["slug"]}@{e["start"]}')
+        if isinstance(venues, dict):
+            continue
         if venues is not None:
             # Keep each venue's link when the corrected line still names it.
             links = {v: h for v in venues for name, h in (e.get("links") or {}).items() if name in v}

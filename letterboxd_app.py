@@ -1086,6 +1086,12 @@ def page_films(url="", text=""):
     """The films on a web page, or in a pasted list, ranked by how many people you follow have seen them."""
     import letterboxd_pagefilms as pf
     res = pf.films_in_text(text) if text else pf.films_on(url)
+    if url and not text:
+        try:
+            import letterboxd_pagecheck
+            letterboxd_pagecheck.watch(url)        # covered by the daily page check from now on
+        except Exception:
+            pass
     films = pf.index()["films"]
     best, stats = best_and_stats()
     try:

@@ -230,8 +230,15 @@ def check_exclusions(problems, notes):
         notes.append(f"exclusions: {len(lp.excluded())} people, all still followed")
 
 
+def check_pages(problems, notes):
+    """Cinema pages you look up: films the daily page check couldn't place, or lost."""
+    import letterboxd_pagecheck as pc
+    for url, what, detail in pc.problems():
+        problems.append(("warn", f"{url.split('//')[-1].strip('/')}: {what}", detail))
+
+
 CHECKS = [check_letterboxd_answers, check_exclusions, check_friends, check_freshness,
-          check_no_list_shrank, check_posters, check_madison]
+          check_no_list_shrank, check_posters, check_madison, check_pages]
 
 
 # ---------------------------------------------------------------- running it

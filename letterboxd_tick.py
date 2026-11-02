@@ -259,6 +259,15 @@ def main():
             refresh.log(f"--- {y} came due while this tick was running — refreshing now")
             refresh.refresh(y)
 
+    # The cinema pages you look up in the app, read again once a day so a page
+    # that stops parsing properly shows up in the health strip.
+    try:
+        import letterboxd_pagecheck as pagecheck
+        if pagecheck.due():
+            pagecheck.run(log=lambda m: refresh.log("--- " + m))
+    except Exception as e:
+        refresh.log(f"--- page check: ERROR {e}")
+
     # Standing health checks. Serious trouble that wasn't there last hour
     # gets a notification, so a broken scrape doesn't sit unnoticed.
     try:

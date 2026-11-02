@@ -63,15 +63,19 @@ def fetch(url):
         url = "https://" + url
     if not allowed(url):
         raise PageError("that site's robots.txt asks automated tools not to read this page")
-    try:
-        r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "en, el;q=0.8"}, timeout=25)
-    except Exception as e:
-        raise PageError(f"couldn't load the page ({type(e).__name__})")
+    for attempt in range(2):                   # small sites (cinema-her.com) are often slow: one more try
+        try:
+            r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "en, el;q=0.8"}, timeout=25)
+            break
+        except Exception as e:
+            if attempt:
+                raise PageError(f"couldn't load the page ({type(e).__name__})")
+            time.sleep(5)
     if r.status_code != 200:
         raise PageError(f"the site answered HTTP {r.status_code}")
     if not r.encoding or r.encoding.lower() == "iso-8859-1":
         r.encoding = r.apparent_encoding
-    return url, r.text
+    return r.url or url, r.text                 # where it ended up: texnopolis.net → www.texnopolis.net
 
 
 def page_lines(page):
@@ -372,7 +376,7 @@ def films_on(url, limit=150, cross_check=True):
                 break
         after = after[:6]
         listing = (bool(after) and bool(nxt) and nxt[0] in after) or bool(year)
-        if any(upcoming(l) for l in [line] + after):
+        if any(upcoming(l) for l in [line] + after + nxt[:1]):
             continue                            # "coming soon": not playing yet, so left out
         hit = match_line(line, ix, listing, year)
         if not hit and year and 2 <= len(line) <= 80 and not is_label(line) and not re.search(r"\d{3,}", line):
@@ -409,12 +413,12 @@ def films_on(url, limit=150, cross_check=True):
 
     # Titles that link to the cinema's own page for the film: that page often
     # names the director, whose Letterboxd page settles which film it is.
-    site = urllib.parse.urlsplit(url).netloc
+    site = urllib.parse.urlsplit(url).netloc.removeprefix("www.")
     links = {}
     for href, text in re.findall(r'<a\b[^>]*href="([^"#]+)"[^>]*>(.*?)</a>', page, re.S | re.I):
         text = re.sub(r"\s+", " ", htmlmod.unescape(re.sub(r"<[^>]+>", " ", text))).strip()
         href = urllib.parse.urljoin(url, href)
-        if text and urllib.parse.urlsplit(href).netloc == site and \
+        if text and urllib.parse.urlsplit(href).netloc.removeprefix("www.") == site and \
                 re.search(r"/(movies?|films?|tainies|tainia|ταινίες)/[^/]+", href, re.I):
             links.setdefault(text, href)
     # A title that matched an old film of the same name ("The Suitcase", 2008)
@@ -451,7 +455,12 @@ def films_on(url, limit=150, cross_check=True):
     for text, href in links.items():
         name = undated(COUNT.sub("", text))
         if name in placed or name in done or tried >= 20 or not 2 <= len(name) <= 80 or upcoming(text) \
-                or is_label(name) or set(norm(name).split()) <= site_words or match_line(name, ix, True):
+                or is_label(name) or set(norm(name).split()) <= site_words:
+            continue
+        titled = match_line(name, ix, True)        # a film page's link named by its title: "Οδύσσεια"
+        if titled:
+            add(titled[0], titled[1], name)
+            placed.add(name)
             continue
         tried += 1
         done.add(name)
@@ -642,12 +651,13 @@ def letterboxd_search(title, year=None, any_year=False):
     key = (norm(q), year, any_year)
     if key in _searches:
         return _searches[key]
-    hit = None
+    hit, answered = None, False
     try:
         import letterboxd_net as net
         r = net.session().get("https://letterboxd.com/s/autocompletefilm",
                               params={"q": q, "limit": 10}, timeout=20)
-        results = r.json().get("data", []) if r.status_code == 200 else []
+        answered = r.status_code == 200
+        results = r.json().get("data", []) if answered else []
         loose = lambda t: re.sub(r"(.)\1+", r"\1", norm(t))         # old spellings: Τρελλή = Τρελή
         same = [d for d in results if loose(q) in (loose(d.get("name") or ""), loose(d.get("originalName") or ""))]
         if year:
@@ -668,8 +678,9 @@ def letterboxd_search(title, year=None, any_year=False):
             if m:
                 hit = (m.group(1), d.get("name"), str(d.get("releaseYear") or ""))
     except Exception:
-        hit = None
-    _searches[key] = hit
+        hit, answered = None, False
+    if answered:                                  # no answer isn't "no such film": ask again next time
+        _searches[key] = hit
     time.sleep(0.7)
     return hit
 
@@ -697,9 +708,20 @@ def undated(text):
 def upcoming(text):
     """True when the text carries a date that's still ahead: a "coming soon" premiere."""
     import datetime
+    today = datetime.date.today()
     for d, m, y in DATE.findall(text):
         try:
-            if datetime.date(int(y), int(m), int(d)) > datetime.date.today():
+            if datetime.date(int(y), int(m), int(d)) > today:
+                return True
+        except ValueError:
+            pass
+    # "Πρεμιέρα από Τρίτη 15/12": a premiere date without the year
+    for d, m in re.findall(r"(?:πρεμι[εέ]ρα|premiere|opens)\D{0,30}?\b(\d{1,2})/(\d{1,2})\b(?!/)", text, re.I):
+        try:
+            when = datetime.date(today.year, int(m), int(d))
+            if when < today - datetime.timedelta(days=60):
+                when = when.replace(year=today.year + 1)
+            if when > today:
                 return True
         except ValueError:
             pass
@@ -723,46 +745,99 @@ def latin_name(greek_name):
     return None
 
 
+def _wikidata_by_greek(name, min_year=None):
+    """[(Letterboxd slug or None, English title, year)] for films whose Greek title on Wikidata is this one."""
+    import requests
+    out = []
+    H = {"User-Agent": "168SeatsPersonalProject/1.0 (personal film list)"}
+    api = "https://www.wikidata.org/w/api.php"
+    hits = requests.get(api, headers=H, timeout=20, params={
+        "action": "wbsearchentities", "search": name, "language": "el", "uselang": "en",
+        "type": "item", "limit": 5, "format": "json"}).json().get("search", [])
+    ids = [h["id"] for h in hits]
+    ents = requests.get(api, headers=H, timeout=20, params={
+        "action": "wbgetentities", "ids": "|".join(ids), "props": "claims|labels|aliases",
+        "languages": "el|en", "format": "json"}).json().get("entities", {}) if ids else {}
+    for q in ids:
+        e = ents.get(q, {})
+        names = [e.get("labels", {}).get("el", {}).get("value", "")] + \
+                [a["value"] for a in e.get("aliases", {}).get("el", [])]
+        if norm(name) not in {norm(n) for n in names if n}:
+            continue                              # found by a word or two, not by its title
+        claim = lambda p: [c["mainsnak"].get("datavalue", {}).get("value") for c in e.get("claims", {}).get(p, [])]
+        years = [v["time"][1:5] for v in claim("P577") if isinstance(v, dict) and v.get("time")]
+        year = min(years) if years else None
+        if min_year and (not year or int(year) < min_year):
+            continue
+        lb = [v for v in claim("P6127") if isinstance(v, str)]
+        out.append((lb[0] if lb else None, e.get("labels", {}).get("en", {}).get("value", ""), year))
+    return out
+
+
+def _sequel(name):
+    """
+    (slug, title, year) for "Γάτες στο Μουσείο 2: Οι Θησαυροί της Αιγύπτου": the
+    first film's Greek title is known (here or on Wikidata), so its English
+    title plus the number is looked up — "Cats in the Museum 2".
+    """
+    m = re.match(r"(.+?)\s+(\d{1,2})(?:\s*[:\-–]|$)", name)
+    if not m or m.group(2) in ("0", "1"):
+        return None
+    base, n = m.group(1).strip(), m.group(2)
+    ix = index()
+    english = None
+    for slug in ix["by_title"].get(norm(base), []):
+        if slug in ix["films"]:
+            english = ix["films"][slug][0]
+        elif slug.startswith("imdb:"):
+            hit = resolve_imdb(slug[5:])
+            english = hit[1] if hit else None
+        if english:
+            break
+    if not english:
+        english = next((en for _, en, _ in _wikidata_by_greek(base) if en), None)
+    if not english:
+        return None
+    try:
+        import letterboxd_net as net
+        r = net.session().get("https://letterboxd.com/s/autocompletefilm",
+                              params={"q": f"{english} {n}", "limit": 10}, timeout=20)
+        this_year = time.localtime().tm_year
+        for d in (r.json().get("data", []) if r.status_code == 200 else []):
+            y, u = d.get("releaseYear"), re.search(r"/film/([a-z0-9-]+)/", d.get("url") or "")
+            if u and y and int(y) >= this_year - 2 and norm(d.get("name") or "").startswith(norm(f"{english} {n}")):
+                return u.group(1), d.get("name"), str(y)
+    except Exception:
+        pass
+    return None
+
+
 def greek_title_elsewhere(text):
     """
     ((slug, title, year), how) for a Greek title Letterboxd doesn't know, or (None, None).
     Wikidata often has the Greek title ("Τερατο-Μία" is Monster Mia) and the
-    film's Letterboxd ID or English title. A title that is an English one
-    spelled in Greek ("Δε Ινφλουένσερ Πρότζεκτ") is searched as it sounds.
-    Only recent films: a cinema's new titles are the ones Letterboxd lacks in Greek.
+    film's Letterboxd ID or English title. A sequel of a film whose Greek title
+    is known is looked up by the first film's English title and its number.
+    A title that is an English one spelled in Greek ("Δε Ινφλουένσερ Πρότζεκτ")
+    is searched as it sounds. Only recent films: a cinema's new titles are the
+    ones Letterboxd lacks in Greek.
     """
-    import requests
     name = re.sub(r"\s+", " ", re.sub(r"\(.*?\)", " ", undated(text))).strip()
     this_year = time.localtime().tm_year
     try:
-        H = {"User-Agent": "168SeatsPersonalProject/1.0 (personal film list)"}
-        api = "https://www.wikidata.org/w/api.php"
-        hits = requests.get(api, headers=H, timeout=20, params={
-            "action": "wbsearchentities", "search": name, "language": "el", "uselang": "en",
-            "type": "item", "limit": 5, "format": "json"}).json().get("search", [])
-        ids = [h["id"] for h in hits]
-        ents = requests.get(api, headers=H, timeout=20, params={
-            "action": "wbgetentities", "ids": "|".join(ids), "props": "claims|labels|aliases",
-            "languages": "el|en", "format": "json"}).json().get("entities", {}) if ids else {}
-        for q in ids:
-            e = ents.get(q, {})
-            names = [e.get("labels", {}).get("el", {}).get("value", "")] + \
-                    [a["value"] for a in e.get("aliases", {}).get("el", [])]
-            if norm(name) not in {norm(n) for n in names if n}:
-                continue                          # found by a word or two, not by its title
-            claim = lambda p: [c["mainsnak"].get("datavalue", {}).get("value") for c in e.get("claims", {}).get(p, [])]
-            years = [v["time"][1:5] for v in claim("P577") if isinstance(v, dict) and v.get("time")]
-            year = min(years) if years else None
-            if not year or int(year) < this_year - 2:
-                continue
-            english = e.get("labels", {}).get("en", {}).get("value", "")
-            lb = [v for v in claim("P6127") if isinstance(v, str)]
+        for lb, english, year in _wikidata_by_greek(name, this_year - 2):
             if lb:
-                return (lb[0], english or name, year), "Wikidata"
+                return (lb, english or name, year), "Wikidata"
             if english:
                 hit = letterboxd_search(english, year)
                 if hit:
                     return hit, "Wikidata"
+    except Exception:
+        pass
+    try:
+        hit = _sequel(name)
+        if hit:
+            return hit, "sequel"
     except Exception:
         pass
     # English spelled in Greek: search by the longest words, keep a result that sounds the same.

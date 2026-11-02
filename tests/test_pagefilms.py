@@ -80,5 +80,14 @@ class Showtimes(unittest.TestCase):
             self.assertFalse(pf.TIME.search(line), line)
 
 
+class MixedAlphabets(unittest.TestCase):
+    def test_latin_lookalikes_in_greek(self):
+        # Greek sites sometimes type a Latin H or M: read it as the Greek letter
+        self.assertEqual(pf.norm("H Σκιά του Πατέρα μου"), pf.norm("Η Σκιά του Πατέρα μου"))
+        self.assertEqual(pf.norm("Mποϊούνα"), pf.norm("Μποϊούνα"))
+        self.assertEqual(pf.norm("Ο Tad και το Μαγικό Λυχνάρι"), "ο tad και το μαγικο λυχναρι")
+        self.assertEqual(pf.norm("Coyote VS Acme"), "coyote vs acme")
+
+
 if __name__ == "__main__":
     unittest.main()

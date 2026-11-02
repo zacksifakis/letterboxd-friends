@@ -83,7 +83,14 @@ def page_lines(page):
 
 # --------------------------------------------------------------- matching
 
+# Latin capitals that look like Greek ones. Greek sites sometimes type them by
+# mistake ("H Σκιά", "Mποϊούνα"); in Greek text they're read as the Greek letter.
+_LOOKALIKE = str.maketrans("ABEHIKMNOPTXYZ", "ΑΒΕΗΙΚΜΝΟΡΤΧΥΖ")
+
+
 def norm(s):
+    if GREEK.search(s):
+        s = " ".join(w.translate(_LOOKALIKE) if GREEK.search(w) or len(w) == 1 else w for w in s.split())
     s = unicodedata.normalize("NFD", s.lower().replace("&", " and ").replace("ς", "σ"))
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     return " ".join(re.findall(r"\w+", s))
@@ -458,7 +465,9 @@ def films_on(url, limit=150, cross_check=True):
                 SEARCHED[hit] = found_it
         else:
             unmatched.append(name)
-    unmatched = [u for u in dict.fromkeys(undated(u) for u in unmatched) if u not in placed]
+    # "Ευκαιρίες απασχόλησης στο Τεχνόπολις": a line naming the site is about the site, not a film.
+    unmatched = [u for u in dict.fromkeys(undated(u) for u in unmatched) if u not in placed
+                 and not any(len(w) >= 5 and w in site_words for w in norm(u).split())]
     still = []
     for u in unmatched[:25]:
         found_it, how = letterboxd_search(u), "Letterboxd search"
@@ -796,7 +805,7 @@ def film_page(film_url):
             _, page = fetch(film_url)
             out = _director_and_year(page)
     except Exception:
-        pass
+        return out                          # a failed load is tried again next time
     _pages[film_url] = out
     return out
 
@@ -822,6 +831,36 @@ def _director_and_year(page):
     return (m.group(1).strip(), None) if m else (None, None)
 
 
+def director_by_sound(greek_name):
+    """A director's Letterboxd slug for a Greek spelling Wikidata doesn't know
+    ("Ακινόλα Ντέιβις" → akinola-davies-jr): Letterboxd's search for the name
+    as it sounds, keeping a director whose name sounds the same."""
+    words = re.findall(r"\w+", greek_name)
+    if not words:
+        return None
+    def latin(w):
+        w = norm(w).replace("τζ", "j")
+        for a, b in _GR:
+            w = w.replace(a, b)
+        return "".join(_GR1.get(c, c) for c in w)
+    key = sounds(greek_name, True)
+    best = (0, None)
+    for q in dict.fromkeys([" ".join(latin(w) for w in words), max(map(latin, words), key=len)]):
+        try:
+            import letterboxd_net as net
+            r = net.session().get(f"https://letterboxd.com/s/search/{urllib.parse.quote(q)}/", timeout=20)
+        except Exception:
+            continue
+        for slug in dict.fromkeys(re.findall(r'href="/director/([a-z0-9-]+)/"', r.text if r.status_code == 200 else "")):
+            name = " ".join(w for w in slug.split("-") if w not in {"jr", "sr", "ii", "iii"} and not w.isdigit())
+            score = difflib.SequenceMatcher(None, key, sounds(name, False)).ratio()
+            best = max(best, (score, slug))
+        time.sleep(0.7)
+        if best[0] >= 0.75:
+            return best[1]
+    return None
+
+
 def by_director(film_url, ix):
     """
     The film a cinema's film page is about, from the director (and year) it
@@ -832,9 +871,11 @@ def by_director(film_url, ix):
     if not name:
         return None
     if GREEK.search(name):
-        name = latin_name(name)            # "Ζαν-Πολ Σαλομέ" → "Jean-Paul Salomé"
-        if not name:
+        latin = latin_name(name)            # "Ζαν-Πολ Σαλομέ" → "Jean-Paul Salomé"
+        slug = director_by_sound(name) if not latin else None
+        if not latin and not slug:
             return None
+        name = latin or slug
     slug = "-".join(re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", name.lower())
                                               .encode("ascii", "ignore").decode()))
     if not slug:

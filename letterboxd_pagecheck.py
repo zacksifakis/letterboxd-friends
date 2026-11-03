@@ -25,6 +25,7 @@ page's "ignore" in page_watch.json.
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -55,15 +56,39 @@ def _save(path, d):
     os.replace(tmp, path)
 
 
+def same(url):
+    """One key for one page: cinema-her.com, www.cinema-her.com and https://cinema-her.com/ alike."""
+    u = re.sub(r"^https?://", "", (url or "").strip().lower())
+    return u.removeprefix("www.").rstrip("/")
+
+
 def watch(url):
     """Remember a page you opened in the app, so the daily check covers it."""
     url = (url or "").strip()
     if not url:
         return
     w = _load(WATCH, {})
-    if url not in w:
+    if same(url) not in {same(u) for u in w}:
         w[url] = {"added": time.time(), "ignore": []}
         _save(WATCH, w)
+
+
+_slugs = {}
+
+
+def _films(res):
+    """{Letterboxd slug: text} — a film known only by its IMDb number gets its slug, so both sites agree."""
+    import letterboxd_pagefilms as pf
+    out = {}
+    for f in res["films"]:
+        k = f["key"]
+        if k.startswith("imdb:"):
+            if k not in _slugs:
+                hit = pf.resolve_imdb(k[5:])
+                _slugs[k] = hit[0] if hit else k
+            k = _slugs[k]
+        out[k] = f["text"]
+    return out
 
 
 def _read(url):
@@ -77,22 +102,29 @@ def _read(url):
 def check_site(url, before, ignore=()):
     import letterboxd_pagefilms as pf
     res, text = _read(url)
-    found = {f["key"]: f["text"] for f in res["films"]}
-    where = {f["key"]: f.get("times") or [] for f in res["films"]}
+    found = _films(res)
+    where = dict(zip(found, (f.get("times") or [] for f in res["films"])))
     skip = {pf.norm(i) for i in ignore}
     unplaced = [u for u in res["unmatched"] if pf.norm(u) not in skip]
-    lost = [t for k, t in (before or {}).items() if k not in found and t and pf.norm(t) in text]
+    # a film the page now announces as coming soon (a premiere banner) isn't lost
+    coming = {pf.norm(c) for c in res.get("coming", [])}
+    def gone(found, text):
+        have = {pf.norm(t) for t in found.values()}     # by title too: a film's ID can change form
+        return [t for k, t in (before or {}).items() if k not in found and t and pf.norm(t) not in have
+                and pf.norm(t) in text and pf.norm(t) not in coming]
+    lost = gone(found, text)
     if unplaced or lost:                          # read again: only lasting trouble counts
         time.sleep(60)
         res2, text2 = _read(url)
-        found2 = {f["key"]: f["text"] for f in res2["films"]}
+        found2 = _films(res2)
         found = {**found, **found2}
-        where = {**{f["key"]: f.get("times") or [] for f in res2["films"]}, **where}
+        where = {**dict(zip(found2, (f.get("times") or [] for f in res2["films"]))), **where}
         text = text2
+        coming |= {pf.norm(c) for c in res2.get("coming", [])}
         unplaced = [u for u in unplaced if u in res2["unmatched"]]
-        lost = [t for k, t in (before or {}).items() if k not in found and t and pf.norm(t) in text2]
+        lost = gone(found, text2)
     return {"films": len(found), "found": found, "where": where, "unplaced": unplaced, "lost": lost,
-            "_text": text}
+            "coming": sorted(coming), "_text": text}
 
 
 def due():
@@ -101,10 +133,13 @@ def due():
 
 
 def run(log=print):
-    w = _load(WATCH, {})
-    for url in SEED:
-        w.setdefault(url, {"added": time.time(), "ignore": []})
+    w, keys = {}, set()
+    for url, opts in [(u, {"added": time.time(), "ignore": []}) for u in SEED] + list(_load(WATCH, {}).items()):
+        if same(url) not in keys:                 # www. and the bare address are the same page
+            keys.add(same(url))
+            w[url] = opts
     _save(WATCH, w)
+    import letterboxd_pagefilms as pf
     prev = _load(RESULT, {}).get("sites", {})
     sites = {}
     for url, opts in w.items():
@@ -112,9 +147,17 @@ def run(log=print):
             # films found on earlier runs are remembered, so one bad day can't erase what "lost" compares against
             before = {**prev.get(url, {}).get("known", {}), **prev.get(url, {}).get("found", {})}
             s = check_site(url, before, opts.get("ignore", []))
-            s["known"] = {**before, **s["found"]}
+            s["failed"] = 0
+            s["known"] = {k: t for k, t in {**before, **s["found"]}.items()
+                          if pf.norm(t) not in set(s["coming"])}
         except Exception as e:
-            s = {"error": f"{type(e).__name__}: {e}", "known": prev.get(url, {}).get("known", {})}
+            # small sites are often down for an hour: keep the last good reading, and only
+            # count it as trouble when the page can't be read two days running
+            last = prev.get(url, {})
+            s = {**{k: v for k, v in last.items() if k != "error"},
+                 "failed": last.get("failed", 0) + 1, "lastError": f"{type(e).__name__}: {e}"}
+            if s["failed"] >= 2:
+                s["error"] = s["lastError"]
         sites[url] = s
         bits = [f"{s.get('films', 0)} films"] + ([f"couldn't place {s['unplaced']}"] if s.get("unplaced") else []) \
             + ([f"no longer found {s['lost']}"] if s.get("lost") else []) + ([s["error"]] if s.get("error") else [])

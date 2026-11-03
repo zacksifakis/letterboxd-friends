@@ -355,7 +355,7 @@ def films_on(url, limit=150, cross_check=True):
         add(ix["tt2slug"].get(tt, "imdb:" + tt), "IMDb link", "")
 
     lines = page_lines(page)
-    unmatched, times_of = [], {}
+    unmatched, times_of, coming = [], {}, []
     page_title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
     site_words = set(norm(htmlmod.unescape(page_title.group(1))).split()) if page_title else set()
     for i, line in enumerate(lines):
@@ -377,6 +377,7 @@ def films_on(url, limit=150, cross_check=True):
         after = after[:6]
         listing = (bool(after) and bool(nxt) and nxt[0] in after) or bool(year)
         if any(upcoming(l) for l in [line] + after + nxt[:1]):
+            coming.append(line)
             continue                            # "coming soon": not playing yet, so left out
         hit = match_line(line, ix, listing, year)
         if not hit and year and 2 <= len(line) <= 80 and not is_label(line) and not re.search(r"\d{3,}", line):
@@ -454,13 +455,17 @@ def films_on(url, limit=150, cross_check=True):
     tried, done = 0, set()
     for text, href in links.items():
         name = undated(COUNT.sub("", text))
-        if name in placed or name in done or tried >= 20 or not 2 <= len(name) <= 80 or upcoming(text) \
+        if name in placed or name in done or not 2 <= len(name) <= 80 or upcoming(text) \
                 or is_label(name) or set(norm(name).split()) <= site_words:
             continue
         titled = match_line(name, ix, True)        # a film page's link named by its title: "Οδύσσεια"
         if titled:
             add(titled[0], titled[1], name)
             placed.add(name)
+            continue
+        if tried >= 40:                            # past the film-page budget: still tried by search below
+            done.add(name)
+            unmatched.append(name)
             continue
         tried += 1
         done.add(name)
@@ -478,7 +483,7 @@ def films_on(url, limit=150, cross_check=True):
     unmatched = [u for u in dict.fromkeys(undated(u) for u in unmatched) if u not in placed
                  and not any(len(w) >= 5 and w in site_words for w in norm(u).split())]
     still = []
-    for u in unmatched[:25]:
+    for u in unmatched[:40]:
         found_it, how = letterboxd_search(u), "Letterboxd search"
         if not found_it and GREEK.search(u):
             found_it, how = greek_title_elsewhere(u)
@@ -487,7 +492,7 @@ def films_on(url, limit=150, cross_check=True):
             SEARCHED[found_it[0]] = found_it
         else:
             still.append(u)
-    unmatched = still + unmatched[25:]
+    unmatched = still + unmatched[40:]
 
     if cross_check:
         helper = CROSS_CHECK.get(site.replace("www.", ""))
@@ -498,7 +503,8 @@ def films_on(url, limit=150, cross_check=True):
     return {"url": url, "title": htmlmod.unescape(title.group(1).strip()) if title else url,
             "films": [found[k] for k in order], "links": {undated(t): h for t, h in links.items()},
             "unmatched": list(dict.fromkeys(unmatched))[:30],
-            "checkedWith": CROSS_CHECK.get(site.replace("www.", "")) if cross_check else None}
+            "checkedWith": CROSS_CHECK.get(site.replace("www.", "")) if cross_check else None,
+            "coming": coming}
 
 
 _searches = {}

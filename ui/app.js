@@ -210,9 +210,10 @@ function boxRecord(L, charts){
     + `By number of theaters: ${row(L.trends.theaters)}<br>`
     + `By change on the week before: ${row(L.trends.change)}<br>`;
   if (L.usingModel)
-    s += `Now guessing from a pattern fitted to these weeks: it got ${L.modelRight} of ${L.modelSure} right on weekends it hadn't seen, against ${L.rulesRight} for the rules.`;
+    s += `Now guessing from a pattern fitted to these weeks. On weekends it hadn't seen, its percentages came closer to what happened than the rates above `
+      + `(average squared miss ${L.modelError} against ${L.groupError}), and its sure calls were right ${L.modelRight} of ${L.modelSure} times.`;
   else if (L.modelSure !== undefined)
-    s += `A pattern fitted to these weeks didn't beat the rules yet (${L.modelRight} of ${L.modelSure}), so the rules stay.`;
+    s += `A pattern fitted to these weeks didn't beat the rates above yet (average squared miss ${L.modelError} against ${L.groupError}), so the rates stay.`;
   else
     s += `With ${30 - Math.min(30, L.examples)} more examples it will try fitting its own pattern, and use it only if it beats the rules.`;
   return s + `<br>${saved}`;

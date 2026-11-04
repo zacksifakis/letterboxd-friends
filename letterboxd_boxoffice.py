@@ -331,7 +331,13 @@ def _solve(A, b):
     return [M[i][n] / M[i][i] if abs(M[i][i]) > 1e-12 else 0.0 for i in range(n)]
 
 
+def _fits(r):
+    """The model needs a theater count and a take per theater; event screenings often have neither."""
+    return bool(r.get("theaters") and r.get("avg"))
+
+
 def _model(exs):
+    exs = [e for e in exs if _fits(e[0])]
     raw = [_features(r) for r, _, _ in exs]
     mean = [sum(c) / len(c) for c in zip(*raw)]
     sd = [max(1e-6, (sum((v - m) ** 2 for v in c) / len(c)) ** 0.5) for c, m in zip(zip(*raw), mean)]
@@ -387,20 +393,43 @@ def learn():
              "rulesRight": rules_right, "rulesSure": rules_sure, "trends": trends, "model": None}
     held = value["held"]
     if len(exs) >= MIN_EXAMPLES and min(held, len(exs) - held) >= 5:
-        # Test on whole weekends left out, so one big week can't flatter it.
+        # Test on whole weekends left out, so one big week can't flatter it. It replaces the
+        # group rates when its percentages land closer to what happened (squared error):
+        # counting right guesses alone would favour whichever is sure about more films.
         right = sure = 0
+        err_model = err_groups = 0.0
         for fri in {f for _, _, f in exs}:
-            m = _model([e for e in exs if e[2] != fri])
+            rest = [e for e in exs if e[2] != fri]
+            m = _model(rest)
             for r, h, f in exs:
-                if f == fri:
-                    lab = _label(_prob(m, r))
+                if f == fri and _fits(r):
+                    p = _prob(m, r)
+                    lab = _label(p)
                     sure += bool(lab)
                     right += lab == ("likely" if h else "unlikely")
+                    err_model += (p - h) ** 2
+                    err_groups += ((_by_groups(r, rest)[0] or 0.5) - h) ** 2
         value["modelRight"], value["modelSure"] = right, sure
-        if right > rules_right:
+        tested = sum(1 for r, _, _ in exs if _fits(r))
+        value["modelError"], value["groupError"] = round(err_model / tested, 3), round(err_groups / tested, 3)
+        if err_model < err_groups:
             value["model"] = _model(exs)
     _learned.update(key=key, value=value)
     return value
+
+
+def _by_groups(r, exs):
+    """(average of the smoothed carry-over rates of the groups r falls in, [what each rate was]) or (None, [])."""
+    rates, bits = [], []
+    for field, groups in BUCKETS.items():
+        if r.get(field) is None or (field != "change" and not r.get(field)):
+            continue
+        label, pick = next((g for g in groups if g[1](r)), (None, None))
+        sub = [h for x, h, _ in exs if pick and pick(x)]
+        if sub:
+            rates.append((sum(sub) + 1) / (len(sub) + 2))
+            bits.append(f"{sum(sub)} of {len(sub)} films {label}")
+    return (sum(rates) / len(rates) if rates else None), bits
 
 
 def chance(r):
@@ -415,23 +444,14 @@ def chance(r):
     if r.get("reissue"):
         return None, ""
     L = learn()
-    if L.get("model"):
+    if L.get("model") and _fits(r):
         return round(_prob(L["model"], r) * 100), \
             f"from a model fitted to {L['examples']} films over {L['weekends']} weekends"
-    exs = examples()
-    rates, bits = [], []
-    for field, groups in BUCKETS.items():
-        if r.get(field) is None or (field != "change" and not r.get(field)):
-            continue
-        label, pick = next((g for g in groups if g[1](r)), (None, None))
-        sub = [h for x, h, _ in exs if pick and pick(x)]
-        if sub:
-            rates.append((sum(sub) + 1) / (len(sub) + 2))
-            bits.append(f"{sum(sub)} of {len(sub)} films {label}")
-    if not rates:
+    p, bits = _by_groups(r, examples())
+    if p is None:
         return None, ""
     n = L["weekends"]
-    return round(100 * sum(rates) / len(rates)), \
+    return round(100 * p), \
         f"{', '.join(bits[:-1]) + ' and ' + bits[-1] if len(bits) > 1 else bits[0]} carried over (from {n} pasted weekend{'' if n == 1 else 's'} whose next week is known; " \
         f"a weekend counts once the following newsletter shows what carried over)"
 
@@ -439,7 +459,7 @@ def chance(r):
 def hint(r):
     """guess(), from the fitted model once there is one."""
     m = learn().get("model")
-    if m and not r.get("reissue"):
+    if m and not r.get("reissue") and _fits(r):
         p = _prob(m, r)
         return _label(p), f"{round(p * 100)}% chance by the pattern in past weeks"
     return guess(r)

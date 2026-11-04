@@ -206,7 +206,9 @@ function boxRecord(L, charts){
   let s = `<b>From ${L.weekends} weekend${L.weekends === 1 ? "" : "s"}</b>, ${L.examples} regular runs, ${L.held} carried on. `
     + `The rules got <b>${L.rulesRight} of ${L.rulesSure}</b> sure guesses right.<br>`
     + `Carried on, by week of release: ${row(L.trends.weeks)}<br>`
-    + `By take per theater: ${row(L.trends.avg)}<br>`;
+    + `By take per theater: ${row(L.trends.avg)}<br>`
+    + `By number of theaters: ${row(L.trends.theaters)}<br>`
+    + `By change on the week before: ${row(L.trends.change)}<br>`;
   if (L.usingModel)
     s += `Now guessing from a pattern fitted to these weeks: it got ${L.modelRight} of ${L.modelSure} right on weekends it hadn't seen, against ${L.rulesRight} for the rules.`;
   else if (L.modelSure !== undefined)

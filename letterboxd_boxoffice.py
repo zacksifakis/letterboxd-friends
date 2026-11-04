@@ -291,10 +291,12 @@ def examples():
 def _features(r):
     th, thc = r.get("theaters") or 0, r.get("thChange") or 0
     before = th - thc
-    return [math.log10((r.get("gross") or 0) + 1),
+    # gross is theaters times the take per theater, so those two stand in for it
+    return [math.log10(th + 1),
             min(r.get("weeks") or 3, 10),
             thc / before if before > 0 else 0.0,
-            math.log10((r.get("avg") or 0) + 1)]
+            math.log10((r.get("avg") or 0) + 1),
+            (r.get("change") or 0) / 100]
 
 
 def _fit(X, y, l2=1.0):
@@ -357,6 +359,13 @@ BUCKETS = {
     "avg": [("under $1,000 a theater", lambda r: (r.get("avg") or 0) < 1000),
             ("at $1,000\u20133,000 a theater", lambda r: 1000 <= (r.get("avg") or 0) < 3000),
             ("at $3,000+ a theater", lambda r: (r.get("avg") or 0) >= 3000)],
+    "theaters": [("in under 1,000 theaters", lambda r: (r.get("theaters") or 0) < 1000),
+                 ("in 1,000\u20132,500 theaters", lambda r: 1000 <= (r.get("theaters") or 0) < 2500),
+                 ("in 2,500+ theaters", lambda r: (r.get("theaters") or 0) >= 2500)],
+    # a film's first weekend has no change from the week before, so it sits this one out
+    "change": [("that fell over 60% on the week", lambda r: r.get("change") is not None and r["change"] < -60),
+               ("that fell 40\u201360% on the week", lambda r: r.get("change") is not None and -60 <= r["change"] < -40),
+               ("that fell under 40% or rose", lambda r: r.get("change") is not None and r["change"] >= -40)],
 }
 
 
@@ -399,7 +408,8 @@ def chance(r):
     (percent, how it was worked out) that a film is still playing next week,
     or (None, "") without history to go on. The fitted model's probability once
     there is one; before that, how often past films like it carried over —
-    same stretch of its run, same takings per theater — each rate nudged
+    same stretch of its run, same takings per theater, about as many theaters,
+    a similar drop on the week before — each rate nudged
     towards 50% while it rests on only a few films.
     """
     if r.get("reissue"):
@@ -411,7 +421,7 @@ def chance(r):
     exs = examples()
     rates, bits = [], []
     for field, groups in BUCKETS.items():
-        if not r.get(field):
+        if r.get(field) is None or (field != "change" and not r.get(field)):
             continue
         label, pick = next((g for g in groups if g[1](r)), (None, None))
         sub = [h for x, h, _ in exs if pick and pick(x)]
@@ -422,7 +432,7 @@ def chance(r):
         return None, ""
     n = L["weekends"]
     return round(100 * sum(rates) / len(rates)), \
-        f"{' and '.join(bits)} carried over (from {n} pasted weekend{'' if n == 1 else 's'} whose next week is known; " \
+        f"{', '.join(bits[:-1]) + ' and ' + bits[-1] if len(bits) > 1 else bits[0]} carried over (from {n} pasted weekend{'' if n == 1 else 's'} whose next week is known; " \
         f"a weekend counts once the following newsletter shows what carried over)"
 
 

@@ -233,7 +233,9 @@ def save(text):
             hist[fri] = {"weekend": label, "at": time.time(), "rows": rows}
         _save(HISTORY, hist)
     newest = max(charts) if charts else ("", "", [])
-    if not text.strip() or charts:
+    last = _load(CACHE, {})
+    older = charts and last.get("rows") and friday(last.get("weekend", ""), datetime.date.fromtimestamp(last.get("at", 0))) > newest[0]
+    if (not text.strip() or charts) and not older:     # catching up on old weekends keeps the latest one
         _save(CACHE, {"at": time.time(), "weekend": newest[1], "rows": newest[2]})
     return newest[2], [c[0] for c in charts]
 
@@ -242,6 +244,13 @@ def load(week=None):
     """The pasted chart, if it's for the weekend inside `week` (start, end): that
     weekend, charted on Monday, is what the newsletter at the end of the week
     decides on. Without a week, any chart pasted in the last few days."""
+    if week:
+        # From the kept charts, so pasting older weekends afterwards can't push this week's out.
+        hist = _load(HISTORY, {})
+        fri = next((f for f in sorted(hist, reverse=True)
+                    if week[0].isoformat() <= f <= week[1].isoformat() and hist[f].get("rows")), None)
+        if fri:
+            return {**hist[fri], "friday": fri}
     try:
         with open(CACHE) as f:
             d = json.load(f)

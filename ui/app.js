@@ -101,9 +101,13 @@ function boxTag(b, x){
   const why = b.why ? ` \u2014 ${b.why}` : "";
   const plus = (d, n) => { const t = new Date(d + "T12:00"); t.setDate(t.getDate() + n); return t.toLocaleDateString("en-CA"); };
   const target = x ? ` Will it be in the newsletter out ~${shortDate(x.end)}, for ${shortDate(plus(x.end, 1))}\u2013${shortDate(plus(x.end, 7))}?` : "";
-  const title = `${nums}${why}.${target} A guess from last weekend's box office; that newsletter will say for sure.`;
-  const label = b.hint === "likely" ? "next week: likely" : b.hint === "unlikely" ? "next week: unlikely" : "next week ?";
-  return `<span class="tag ${b.hint}" title="${title.replace(/"/g, "&quot;")}">${label}</span>`;
+  const odds = b.chance != null ? ` ${b.chance}% chance: ${b.chanceWhy}.` : "";
+  const title = `${nums}${why}.${odds}${target} A guess from last weekend's box office; that newsletter will say for sure.`;
+  // With a percentage, the word follows it, so the two never disagree.
+  const hint = b.chance == null ? b.hint : b.chance >= 65 ? "likely" : b.chance <= 35 ? "unlikely" : "";
+  const word = hint === "likely" ? "likely" : hint === "unlikely" ? "unlikely" : b.chance != null ? "toss-up" : "?";
+  const label = b.chance != null ? `next week: ${word} \u00b7 ${b.chance}%` : `next week${word === "?" ? " ?" : ": " + word}`;
+  return `<span class="tag ${hint}" title="${title.replace(/"/g, "&quot;")}">${label}</span>`;
 }
 
 function renderMadison(){

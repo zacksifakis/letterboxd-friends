@@ -1064,7 +1064,8 @@ def madison_listings():
         r = bo.match(chart["rows"], item["title"]) if chart else None
         if r:
             hint, why = bo.hint(r)
-            item["box"] = {**r, "hint": hint, "why": why}
+            pct, basis = bo.chance(r)
+            item["box"] = {**r, "hint": hint, "why": why, "chance": pct, "chanceWhy": basis}
     learned = bo.learn()
 
     order = lambda d: sorted(d.values(), key=lambda x: (-x["seats"], x["title"].lower()))

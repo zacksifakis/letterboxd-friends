@@ -349,6 +349,17 @@ def _label(p):
 _learned = {}
 
 
+# How past films are grouped when counting how many carried over.
+BUCKETS = {
+    "weeks": [("in weeks 1\u20132", lambda r: (r.get("weeks") or 0) <= 2),
+              ("in weeks 3\u20134", lambda r: 3 <= (r.get("weeks") or 0) <= 4),
+              ("in week 5+", lambda r: (r.get("weeks") or 0) >= 5)],
+    "avg": [("under $1,000 a theater", lambda r: (r.get("avg") or 0) < 1000),
+            ("at $1,000\u20133,000 a theater", lambda r: 1000 <= (r.get("avg") or 0) < 3000),
+            ("at $3,000+ a theater", lambda r: (r.get("avg") or 0) >= 3000)],
+}
+
+
 def learn():
     """What past weeks say: how the rules have done, hold-over rates, and a fitted model if it earns its place."""
     key = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (HISTORY, WEEKS))
@@ -361,14 +372,8 @@ def learn():
     def rate(pick):
         sub = [h for r, h, _ in exs if pick(r)]
         return [len(sub), sum(sub)]
-    trends = {
-        "weeks": [["weeks 1\u20132", rate(lambda r: (r.get("weeks") or 0) <= 2)],
-                  ["weeks 3\u20134", rate(lambda r: 3 <= (r.get("weeks") or 0) <= 4)],
-                  ["week 5+", rate(lambda r: (r.get("weeks") or 0) >= 5)]],
-        "avg": [["under $1,000 a theater", rate(lambda r: (r.get("avg") or 0) < 1000)],
-                ["$1,000\u20133,000", rate(lambda r: 1000 <= (r.get("avg") or 0) < 3000)],
-                ["$3,000+", rate(lambda r: (r.get("avg") or 0) >= 3000)]],
-    }
+    trends = {k: [[label.removeprefix("in ").removeprefix("at "), rate(pick)] for label, pick in v]
+              for k, v in BUCKETS.items()}
     value = {"examples": len(exs), "weekends": len({f for _, _, f in exs}), "held": sum(h for _, h, _ in exs),
              "rulesRight": rules_right, "rulesSure": rules_sure, "trends": trends, "model": None}
     held = value["held"]
@@ -387,6 +392,37 @@ def learn():
             value["model"] = _model(exs)
     _learned.update(key=key, value=value)
     return value
+
+
+def chance(r):
+    """
+    (percent, how it was worked out) that a film is still playing next week,
+    or (None, "") without history to go on. The fitted model's probability once
+    there is one; before that, how often past films like it carried over —
+    same stretch of its run, same takings per theater — each rate nudged
+    towards 50% while it rests on only a few films.
+    """
+    if r.get("reissue"):
+        return None, ""
+    L = learn()
+    if L.get("model"):
+        return round(_prob(L["model"], r) * 100), \
+            f"from a model fitted to {L['examples']} films over {L['weekends']} weekends"
+    exs = examples()
+    rates, bits = [], []
+    for field, groups in BUCKETS.items():
+        if not r.get(field):
+            continue
+        label, pick = next((g for g in groups if g[1](r)), (None, None))
+        sub = [h for x, h, _ in exs if pick and pick(x)]
+        if sub:
+            rates.append((sum(sub) + 1) / (len(sub) + 2))
+            bits.append(f"{sum(sub)} of {len(sub)} films {label}")
+    if not rates:
+        return None, ""
+    n = L["weekends"]
+    return round(100 * sum(rates) / len(rates)), \
+        f"{' and '.join(bits)} carried over (so far from {n} weekend{'' if n == 1 else 's'} you pasted)"
 
 
 def hint(r):

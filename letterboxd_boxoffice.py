@@ -422,7 +422,8 @@ def chance(r):
         return None, ""
     n = L["weekends"]
     return round(100 * sum(rates) / len(rates)), \
-        f"{' and '.join(bits)} carried over (so far from {n} weekend{'' if n == 1 else 's'} you pasted)"
+        f"{' and '.join(bits)} carried over (from {n} pasted weekend{'' if n == 1 else 's'} whose next week is known; " \
+        f"a weekend counts once the following newsletter shows what carried over)"
 
 
 def hint(r):

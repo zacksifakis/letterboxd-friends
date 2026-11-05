@@ -662,6 +662,11 @@ def _mdy(s):
     return datetime.date(y, m, d)
 
 
+# Cinema names in the newsletter's listing lines.
+MADISON_VENUES = r"\b(?:AMC|Marcus|Flix|Cinematheque|Marquee|Union South|Chazen|MMoCA|Museum|Majestic|" \
+                 r"Barrymore|Bartell|Point|Palace|Eastgate|Market Square|Sundance|Westgate)\b"
+
+
 def _parse_report(post_html, post_url, post_title):
     from bs4 import BeautifulSoup, NavigableString, Tag
     soup = BeautifulSoup(post_html, "html.parser")
@@ -690,8 +695,15 @@ def _parse_report(post_html, post_url, post_title):
             films = [(re.search(r"letterboxd\.com/film/([^/?#]+)", href).group(1), label)
                      for kind, href, label in parts
                      if kind == "a" and re.search(r"letterboxd\.com/film/([^/?#]+)", href)]
+            line = re.sub(r"\s+", " ", " ".join(label for _, _, label in parts)).strip()
+            if not films:
+                # Now and then a film is listed without its Letterboxd link
+                # ("-Resident Evil - Marcus Point"): a listing line all the same
+                # when what follows the dash names a cinema. Its film is found later.
+                plain = re.match(r"^[-–•]\s*(.{2,80}?)\s+[-–—]\s+(.+)$", line)
+                if plain and re.search(MADISON_VENUES, plain.group(2), re.I):
+                    films = [(None, plain.group(1).strip())]
             if films:
-                line = re.sub(r"\s+", " ", " ".join(label for _, _, label in parts)).strip()
                 title = films[-1][1]
                 after = line.split(title, 1)[1] if title in line else ""
                 note = ""
@@ -742,7 +754,7 @@ def _parse_report(post_html, post_url, post_title):
 def _norm_title(text):
     """Titles compared loosely: case, accents and punctuation don't count."""
     t = unicodedata.normalize("NFKD", text or "").lower()
-    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = "".join(c for c in t if not unicodedata.combining(c)).replace("&", " and ")
     return re.sub(r"[^a-z0-9]+", " ", t).strip()
 
 
@@ -776,6 +788,36 @@ def _film_identity(slug):
     return None
 
 
+def _resolve_unlinked(entries, by_title, weeks=None):
+    """
+    A slug for each film the newsletter listed without a Letterboxd link: the
+    same title in an earlier week's listings first (it's usually a film still
+    running), then your own lists (the newest film by that name), then
+    Letterboxd's search. Left as None when none of them is sure.
+    """
+    import letterboxd_boxoffice as bo
+    seen = {}
+    for start, w in sorted((weeks if weeks is not None else bo._load(bo.WEEKS, {})).items()):
+        for slug, f in w["films"].items():
+            if not slug.startswith("title:"):
+                seen[_norm_title(f["title"])] = slug
+    for e in entries:
+        if e["slug"]:
+            continue
+        key = _norm_title(e["title"])
+        if key in seen:
+            e["slug"] = seen[key]
+        elif by_title.get(key):
+            e["slug"] = max(by_title[key])[1]
+        else:
+            try:
+                import letterboxd_pagefilms as pf
+                hit = pf.letterboxd_search(e["title"])
+                e["slug"] = hit[0] if hit else None
+            except Exception:
+                e["slug"] = None
+
+
 def _record_weeks(reports, ns):
     """Keep each issue's own week (its full listings, not the next-week preview)
     in madison_weeks.json, so weekend box office can later be checked against
@@ -787,6 +829,9 @@ def _record_weeks(reports, ns):
                                it.findtext("link") or "", it.findtext("title") or ""):
             if e["week"] != "This Week":
                 continue
+            if not e["slug"]:
+                _resolve_unlinked([e], {}, weeks)
+                e["slug"] = e["slug"] or "title:" + _norm_title(e["title"])
             w = weeks.setdefault(e["start"], {"end": e["end"], "post": e["post"], "films": {}})
             if w["post"] != e["post"] and w["films"] and e["slug"] not in w["films"]:
                 continue                         # an older issue's list of the same week
@@ -833,6 +878,8 @@ def refresh_madison():
             for r in blob["rows"]:
                 known.setdefault(r["slug"], r)
                 by_title.setdefault(_norm_title(r["title"]), set()).add((r.get("year") or "", r["slug"]))
+        _resolve_unlinked(entries, by_title)
+        entries = [e for e in entries if e["slug"]]
         for slug in {e["slug"] for e in entries}:
             if slug in known or slug in book:
                 continue

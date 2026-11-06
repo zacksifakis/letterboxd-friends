@@ -472,3 +472,81 @@ def hint(r):
         p = _prob(m, r)
         return _label(p), f"{round(p * 100)}% chance by the pattern in past weeks"
     return guess(r)
+
+
+# ------------------------------------------------- an early guess, before Monday's chart
+#
+# From Thursday to Monday this week's weekend isn't charted yet. A film that was
+# on last weekend's chart gets a model fitted on charts one week older than the
+# usual ones (last weekend's numbers against the week after this one); a film
+# new this week gets how often past new films carried over, by how widely they
+# opened in Madison. Monday's chart replaces both.
+
+def _week_list():
+    W = _load(WEEKS, {})
+    return W, sorted(W)
+
+
+def early_examples():
+    """([(last weekend's chart row, held over?, week start)], [(group label, held over?, week start)])."""
+    W, starts = _week_list()
+    H = _load(HISTORY, {})
+    lag, new = [], []
+    for i in range(1, len(starts) - 1):
+        prev, this, nxt = W[starts[i - 1]], W[starts[i]], W[starts[i + 1]]
+        later = {norm(f["title"]) for f in nxt["films"].values()} | set(nxt["films"])
+        fri = next((f for f in sorted(H) if starts[i - 1] <= f <= prev["end"]), None)
+        rows = H[fri]["rows"] if fri else []
+        for slug, f in this["films"].items():
+            if not f.get("regular"):
+                continue
+            held = slug in later or norm(f["title"]) in later
+            r = match(rows, f["title"]) if rows else None
+            if r and not r.get("reissue") and _fits(r):
+                lag.append((r, held, starts[i]))
+            elif rows:
+                new.append((opening_group(f.get("venues", 0), f.get("section", "")), held, starts[i]))
+    return lag, new
+
+
+def opening_group(venues, section):
+    kind = "repertory runs" if section == "Repertory" else "new releases"
+    size = "at one Madison theater" if venues <= 1 else "at 2–3 Madison theaters" if venues <= 3 \
+        else "at 4+ Madison theaters"
+    return f"{kind} {size}"
+
+
+_early = {}
+
+
+def early_learn():
+    key = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (HISTORY, WEEKS))
+    if _early.get("key") == key:
+        return _early["value"]
+    lag, new = early_examples()
+    groups = {}
+    for g, h, _ in new:
+        groups.setdefault(g, [0, 0])
+        groups[g][0] += 1
+        groups[g][1] += h
+    value = {"lag": len(lag), "new": len(new), "groups": groups, "model": None}
+    held = sum(h for _, h, _ in lag)
+    if len(lag) >= MIN_EXAMPLES and min(held, len(lag) - held) >= 5:
+        value["model"] = _model(lag)
+    _early.update(key=key, value=value)
+    return value
+
+
+def early_chance(row, venues, section):
+    """(percent, how) before this weekend is charted, or (None, '')."""
+    E = early_learn()
+    if row is not None:
+        if row.get("reissue") or not E["model"] or not _fits(row):
+            return None, ""
+        return round(_prob(E["model"], row) * 100), \
+            f"from last weekend's numbers, by a model fitted to {E['lag']} past films the same way"
+    g = opening_group(venues, section)
+    n, k = E["groups"].get(g, (0, 0))
+    if not n:
+        return None, ""
+    return round(100 * (k + 1) / (n + 2)), f"{k} of {n} past {g} carried over"

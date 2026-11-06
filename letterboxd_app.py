@@ -837,7 +837,10 @@ def _record_weeks(reports, ns):
                 continue                         # an older issue's list of the same week
             f = w["films"].setdefault(e["slug"], {"title": e["title"], "regular": False})
             # A venue with no date on it is a regular run, not a one-off screening.
-            f["regular"] = f["regular"] or any(not re.search(r"\b\d{1,2}/\d{1,2}\b", v) for v in e["venues"])
+            runs = [v for v in e["venues"] if not re.search(r"\b\d{1,2}/\d{1,2}\b", v)]
+            f["regular"] = f["regular"] or bool(runs)
+            f["venues"] = max(f.get("venues", 0), len(runs))       # how widely it's playing
+            f["section"] = f.get("section") or e["section"]
     bo._save(bo.WEEKS, weeks)
 
 
@@ -1113,6 +1116,19 @@ def madison_listings():
             hint, why = bo.hint(r)
             pct, basis = bo.chance(r)
             item["box"] = {**r, "hint": hint, "why": why, "chance": pct, "chanceWhy": basis}
+    # Before this weekend is charted (Thursday to Monday): an early guess from
+    # last weekend's chart, or for a film new this week, from how widely it opened.
+    if now_wk and not chart:
+        prev_wk = (now_wk[0] - datetime.timedelta(days=7), now_wk[1] - datetime.timedelta(days=7))
+        before = bo.load(prev_wk)
+        for item in now.values():
+            runs = [v for v in item["venues"] if not venue_times(v)]
+            if not runs:
+                continue                          # one-off screenings: their dates already say
+            r = bo.match(before["rows"], item["title"]) if before else None
+            pct, basis = bo.early_chance(r, len(runs), item.get("section", ""))
+            if pct is not None:
+                item["early"] = {"chance": pct, "why": basis, "weekend": before.get("weekend", "") if before else ""}
     learned = bo.learn()
 
     order = lambda d: sorted(d.values(), key=lambda x: (-x["seats"], x["title"].lower()))

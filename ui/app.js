@@ -93,6 +93,15 @@ function venueLinks(x){
 
 // A guess from the weekend box office you pasted, with its numbers on hover.
 const usd = v => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e4 ? `$${Math.round(v / 1e3)}K` : `$${Math.round(v).toLocaleString()}`;
+// Before this weekend's chart is out: a rougher guess, marked with "~".
+function earlyTag(e){
+  const word = e.chance >= 65 ? "likely" : e.chance <= 35 ? "unlikely" : "toss-up";
+  const cls = word === "toss-up" ? "" : word;
+  const title = `An early guess, before this weekend's box office is out (Monday): ${e.chance}% chance it carries on, ${e.why}.`
+    + ` Paste Monday's chart for a firmer one.`;
+  return `<span class="tag ${cls}" title="${title.replace(/"/g, "&quot;")}">next week: ${word} \u00b7 ~${e.chance}%</span>`;
+}
+
 function boxTag(b, x){
   const nums = [`#${b.rank} last weekend`, usd(b.gross) + (b.change != null ? ` (${b.change > 0 ? "+" : ""}${Math.round(b.change)}%)` : "")]
     .concat(b.theaters ? [`${b.theaters.toLocaleString()} theaters` + (b.thChange ? ` (${b.thChange > 0 ? "+" : ""}${b.thChange.toLocaleString()})` : "")] : [])
@@ -164,6 +173,8 @@ function renderMadison(){
         carry = `<span class="tag" title="its screenings are all this week">\u2717 not next week</span>`;
       else if (x.box)
         carry = boxTag(x.box, x);
+      else if (x.early)
+        carry = earlyTag(x.early);
       else
         carry = `<span class="tag" title="not in next week's preview, which only lists what's new; Wednesday's newsletter will say if it continues">next week ?</span>`;
     } else if (MAD.showing === "soon" && !MAD.now.has(x.slug)) {

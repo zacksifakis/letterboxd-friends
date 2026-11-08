@@ -268,6 +268,14 @@ def main():
     except Exception as e:
         refresh.log(f"--- page check: ERROR {e}")
 
+    # Director, cast and premise for films that just got a poster, ready for
+    # the evening's summaries.
+    try:
+        import letterboxd_plots as plots
+        plots.fetch_facts(30, log=refresh.log)
+    except Exception as e:
+        refresh.log(f"--- plot facts: ERROR {e}")
+
     # Standing health checks. Serious trouble that wasn't there last hour
     # gets a notification, so a broken scrape doesn't sit unnoticed.
     try:

@@ -276,6 +276,14 @@ def main():
     except Exception as e:
         refresh.log(f"--- plot facts: ERROR {e}")
 
+    # Wikipedia's wording of the genre, a little each hour: new films, and
+    # recent ones again weekly.
+    try:
+        import letterboxd_wikigenre as wikigenre
+        wikigenre.fetch(log=lambda m: refresh.log("--- " + m), limit=200)
+    except Exception as e:
+        refresh.log(f"--- wikipedia genres: ERROR {e}")
+
     # Standing health checks. Serious trouble that wasn't there last hour
     # gets a notification, so a broken scrape doesn't sit unnoticed.
     try:

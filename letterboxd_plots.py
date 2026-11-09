@@ -146,7 +146,7 @@ def writer_copy(batch, notes, out):
     print(f"writer copy: {len(rows)} films, {sum(1 for y in rows if not y['notes'])} without notes")
 
 
-def check(text, lang, synopsis=""):
+def check(text, lang):
     """Why this summary shouldn't be saved, or '' if it's fine."""
     letters = [c for c in text if c.isalpha()]
     share = sum(1 for c in letters if GREEK.match(c)) / max(1, len(letters))
@@ -157,8 +157,6 @@ def check(text, lang, synopsis=""):
         return "not in English"
     if not 15 <= words <= 110:
         return f"{words} words"
-    if synopsis and len(synopsis) > 200 and abs(len(text) - len(synopsis)) < 0.03 * len(synopsis):
-        return "same length as the synopsis: may be a translation"
     return ""
 
 
@@ -178,7 +176,7 @@ def merge(batch, result, el, en, skipped):
                     skipped[slug].append(lang)
                 set_aside += 1
                 continue
-            why = check(text, lang, x.get("synopsis", ""))
+            why = check(text, lang)         # the writer only ever sees the notes, not the synopsis
             if why:
                 problems.append(f"{slug} ({lang}): {why}")
             else:

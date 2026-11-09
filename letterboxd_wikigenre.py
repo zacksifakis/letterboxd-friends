@@ -28,6 +28,7 @@ PHRASES_EL = os.path.join(CACHE_DIR, "genre_phrases_el.json")  # phrase -> Greek
 API = "https://en.wikipedia.org/w/api.php"
 UA = "168SeatsPersonalProject/1.0 (personal film list; low request volume)"
 RECHECK_DAYS = 7          # recent films' articles change as they're written up
+CHUNK = 200               # films between saves
 
 
 def log(msg):
@@ -76,7 +77,7 @@ def genre_phrase(sentence):
 
 
 def _enwiki_titles(qids):
-    """{qid: English Wikipedia title} via Wikidata sitelinks, 50 a request."""
+    """{qid: English Wikipedia title, or "" if it has no article}, only for what Wikidata answered; 50 a request."""
     import letterboxd_wikidata as wd
     out = {}
     for i in range(0, len(qids), 50):
@@ -91,9 +92,7 @@ def _enwiki_titles(qids):
                 break
             time.sleep(10 * (attempt + 1))
         for q, ent in data.get("entities", {}).items():
-            t = ent.get("sitelinks", {}).get("enwiki", {}).get("title")
-            if t:
-                out[q] = t
+            out[q] = ent.get("sitelinks", {}).get("enwiki", {}).get("title") or ""
         time.sleep(0.4)
     return out
 
@@ -113,60 +112,80 @@ def _first_sentences(titles):
         for page in q.get("pages", {}).values():
             t = page.get("title", "")
             out[back.get(t, t)] = (page.get("extract") or "").strip()
-        time.sleep(0.3)
+        time.sleep(1.0)
     return out
 
 
-def fetch(slugs=None, log=log):
-    """Phrases for new films, and for this year's and last year's again weekly."""
+def _due(s, cache, recent, now):
+    return s not in cache or (s in recent and now - cache[s].get("at", 0) > RECHECK_DAYS * 86400)
+
+
+def _linked(part, q_of, cache, now):
+    """Phrases for films Wikidata links to an article. A film whose lookup got no answer stays out of the cache."""
+    titles = _enwiki_titles(list({q_of[s] for s in part}))
+    wanted = sorted({t for t in titles.values() if t})
+    sentences = _first_sentences(wanted)
+    found = 0
+    for s in part:
+        if q_of[s] not in titles:
+            continue
+        t = titles[q_of[s]]
+        phrase = genre_phrase(sentences.get(t, "")) if t else ""
+        cache[s] = {"title": t, "phrase": phrase, "at": now}
+        found += bool(phrase)
+    return found
+
+
+def _by_name(part, films, cache, now):
+    """Films Wikidata doesn't link yet (common for new releases): try the usual article
+    names, accepting one only if its first sentence says it's a film from that year."""
+    names = lambda t, y: ([f"{t} ({y} film)"] if y else []) + [f"{t} (film)", t]
+    text = _first_sentences(sorted({g for s in part for g in names(*films[s][:2])}))
+    found = 0
+    for s in part:
+        t, y, _ = films[s]
+        cache[s] = {"title": "", "phrase": "", "at": now}
+        for g in names(t, y):
+            sent = text.get(g, "")
+            if y and re.search(rf"\b(?:is|was) an? {y}\b", sent) and genre_phrase(sent):
+                cache[s] = {"title": g, "phrase": genre_phrase(sent), "at": now}
+                found += 1
+                break
+    return found
+
+
+def fetch(slugs=None, log=log, limit=None):
+    """
+    Phrases for new films, and for this year's and last year's again weekly, at
+    most `limit` films a run. Saved every CHUNK films, so being throttled part
+    way loses nothing and the next run carries on from there.
+    """
     import letterboxd_filmpages as fp
     import letterboxd_greek_titles as gt
     wdc = _load(os.path.join(CACHE_DIR, "wikidata_el.json"), {})
     cache, now = _load(CACHE, {}), time.time()
-    recent = gt.recent_slugs()
+    recent, films = gt.recent_slugs(), gt.films()
     slugs = slugs or fp.targets()
-    todo = [s for s in slugs if (wdc.get("films", {}).get(s) or {}).get("q")
-            and (s not in cache or (s in recent and now - cache[s].get("at", 0) > RECHECK_DAYS * 86400))]
-    log(f"wikipedia genres: {len(todo):,} films to look up")
-    q_of = {s: wdc["films"][s]["q"] for s in todo}
-    titles = _enwiki_titles(list(set(q_of.values())))
-    by_title = {}
-    for s, q in q_of.items():
-        if q in titles:
-            by_title.setdefault(titles[q], []).append(s)
-    sentences = _first_sentences(list(by_title))
-    found = 0
-    for s in todo:
-        t = titles.get(q_of[s])
-        phrase = genre_phrase(sentences.get(t, "")) if t else ""
-        cache[s] = {"title": t or "", "phrase": phrase, "at": now}
-        found += bool(phrase)
-
-    # Films Wikidata doesn't link to Letterboxd yet (common for new releases):
-    # try the usual article names, accepting one only if its first sentence
-    # says it's a film from that year.
-    films = gt.films()
-    unlinked = [s for s in slugs if s in films and not (wdc.get("films", {}).get(s) or {}).get("q")
-                and (s not in cache or (s in recent and now - cache[s].get("at", 0) > RECHECK_DAYS * 86400))]
-    if unlinked:
-        guesses = {}
-        for s in unlinked:
-            t, y, _ = films[s]
-            for g in ([f"{t} ({y} film)"] if y else []) + [f"{t} (film)", t]:
-                guesses.setdefault(g, []).append(s)
-        text = _first_sentences(list(guesses))
-        for s in unlinked:
-            t, y, _ = films[s]
-            cache[s] = {"title": "", "phrase": "", "at": now}
-            for g in ([f"{t} ({y} film)"] if y else []) + [f"{t} (film)", t]:
-                sent = text.get(g, "")
-                if y and re.search(rf"\b(?:is|was) an? {y}\b", sent) and genre_phrase(sent):
-                    cache[s] = {"title": g, "phrase": genre_phrase(sent), "at": now}
-                    found += 1
-                    break
-        log(f"wikipedia genres: {len(unlinked):,} films not linked on Wikidata, looked up by title")
-    _save(CACHE, cache)
-    log(f"wikipedia genres: {found:,} of {len(todo):,} have a genre phrase")
+    q_of = {s: wdc["films"][s]["q"] for s in slugs if (wdc.get("films", {}).get(s) or {}).get("q")}
+    linked = [s for s in slugs if s in q_of and _due(s, cache, recent, now)]
+    unlinked = [s for s in slugs if s not in q_of and s in films and _due(s, cache, recent, now)]
+    if limit is not None:
+        linked = linked[:limit]
+        unlinked = unlinked[:max(0, limit - len(linked))]
+    if not linked and not unlinked:
+        return 0
+    log(f"wikipedia genres: {len(linked):,} films to look up, {len(unlinked):,} more by title")
+    found = done = 0
+    try:
+        for job, todo in ((lambda p: _linked(p, q_of, cache, now), linked),
+                          (lambda p: _by_name(p, films, cache, now), unlinked)):
+            for i in range(0, len(todo), CHUNK):
+                found += job(todo[i:i + CHUNK])
+                done += len(todo[i:i + CHUNK])
+                _save(CACHE, cache)
+                log(f"wikipedia genres: {done:,} looked up, {found:,} with a genre phrase")
+    except RuntimeError as e:
+        log(f"wikipedia genres: stopped early, the next run carries on ({e})")
     return found
 
 
